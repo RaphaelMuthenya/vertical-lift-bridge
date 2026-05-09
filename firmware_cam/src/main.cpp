@@ -120,8 +120,12 @@ void loop() {
         if (motion_pct > DETECT_PCT_THRESH) {
             vehicle = true;
             s_last_detect_ms = millis();
-        } else if (millis() - s_last_detect_ms < DETECT_HOLD_MS) {
-            vehicle = true;     // Hold detection briefly
+        } else if (s_last_detect_ms != 0 &&
+                   millis() - s_last_detect_ms < DETECT_HOLD_MS) {
+            // Hold detection briefly. The s_last_detect_ms != 0 guard
+            // suppresses a phantom hold during the first ~400 ms after
+            // boot when s_last_detect_ms is still its zero-init value.
+            vehicle = true;
         }
     }
     memcpy(s_prev, roi, ROI_W * ROI_H);

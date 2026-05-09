@@ -73,7 +73,17 @@ void motor_driver_init(void) {
     analogReadResolution(12);
     analogSetPinAttenuation(PIN_DECK_POSITION, ADC_11db); // 0..3.3 V
 
-    Serial.println("[motor] init OK (L293L module, no current-sense)");
+    // Seed the auto-zero reference from a 4-sample average at boot. This
+    // assumes the deck is parked at the mechanical bottom on power-up
+    // (the system spends most of its life there). A subsequent bottom-
+    // limit hit re-zeros precisely; until then we're at most one cycle
+    // away from a true zero.
+    uint32_t adc_sum = 0;
+    for (int i = 0; i < 4; i++) adc_sum += analogRead(PIN_DECK_POSITION);
+    s_adc_zero = (int32_t)(adc_sum >> 2);
+
+    Serial.printf("[motor] init OK (L293L module, no current-sense, adc_zero=%ld)\n",
+                  (long)s_adc_zero);
 }
 
 void motor_driver_apply(const MotorCommand_t& cmd) {

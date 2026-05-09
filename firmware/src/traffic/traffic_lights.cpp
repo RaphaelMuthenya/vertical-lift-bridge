@@ -5,17 +5,19 @@
 //   bit3 MARINE_R, bit4 MARINE_Y, bit5 MARINE_G
 // Owner: M4 Abigael
 //
-// Pin-sharing note (v2.2): three of the four 74HC595 control lines share
-// physical GPIOs with HC-SR04 ECHO inputs (see pin_config.h §LIMIT
-// SWITCHES and §TRAFFIC LIGHTS). To stop shift_out from leaving those
-// pins permanently driven (which would silently break ultrasonic reads
-// on US1, US2, US3), shift_out reconfigures DATA/CLOCK/LATCH to OUTPUT
-// only for the duration of the byte transfer (~100 µs) and restores
-// them to INPUT_PULLUP afterwards. PIN_595_OE_N stays a permanent
-// OUTPUT (driven LOW = chain enabled) — the OE pin must hold its level
-// or the visible LEDs would dim/extinguish during the transfer; that
-// constraint means GPIO 21 cannot be shared, so US2_ECHO (also GPIO 21)
-// is permanently disabled in v2.2 (cf. known_limitations.md L8).
+// Pin-sharing note (v2.2): the four 74HC595 control lines share physical
+// GPIOs with HC-SR04 driver lines (see pin_config.h §LIMIT SWITCHES and
+// §TRAFFIC LIGHTS). The compromise:
+//
+//   • DATA  (GPIO 23, also US3_ECHO) — toggled OUTPUT only during shift,
+//     restored to INPUT_PULLUP between shifts so US3 can read its echo.
+//   • CLOCK (GPIO 18, also US1_ECHO) — same toggle scheme; US1 echo OK.
+//   • LATCH (GPIO 19, also US2_TRIG) — both drivers want OUTPUT; we
+//     leave it permanently OUTPUT and just write the rising edge here.
+//   • OE    (GPIO 21, also US2_ECHO) — permanent OUTPUT LOW (must hold
+//     its level or the LEDs would dim/extinguish). This means GPIO 21
+//     cannot be shared, so US2_ECHO is permanently disabled in v2.2
+//     (cf. known_limitations.md L8).
 // ============================================================================
 #include "traffic_lights.h"
 #include "../pin_config.h"
