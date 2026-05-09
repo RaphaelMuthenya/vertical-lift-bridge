@@ -199,7 +199,7 @@ Notes: Background reads c=2-3 due to bench fluorescents; no false positives in 1
 The ESP32-CAM **brownouts** if it shares the main ESP32's 5 V regulator during the camera capture burst (~240 mA spike). You **MUST** use a separate 5 V buck converter from the 12 V rail.
 
 For breadboard prototyping (before the PCB exists):
-1. Use a small **MP1584 or LM2596 buck module** (~KES 250 from Pixel) tied to the 12 V supply.
+1. Use the dedicated **LM1084 buck module** on the main PCB (M_BUCK_CAM, BOM line 4) tied to the 12 V supply. For breadboard prototyping before the PCB exists, any MP1584 / LM2596 / LM1084 module set to 5.0 V will do.
 2. Adjust the trim pot to output **5.0 ± 0.1 V** (measure with multimeter before connecting CAM).
 3. Connect CAM 5 V to the buck output.
 4. Add a **470 µF electrolytic capacitor** across the CAM 5 V/GND pins, right at the module. This buffers the inrush at camera startup.

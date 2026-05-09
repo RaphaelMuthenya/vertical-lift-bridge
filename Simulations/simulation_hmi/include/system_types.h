@@ -61,13 +61,19 @@ typedef enum : uint8_t {
 // Fault flags — bitmask. Stored in SharedStatus.fault_flags.
 // Each bit is independent; multiple faults can coexist.
 // Owner of fault register: M5 Ian (safety/fault_register.cpp).
+//
+// SIMULATION NOTE (v2.2): this header is a copy used by the desktop LVGL
+// simulation only. The simulation deliberately mocks values for fields the
+// production firmware leaves at sentinel (motor_current_ma, rail_*_volts)
+// so the dashboard can be designed against what the v3 PCB will eventually
+// expose. See Simulations/simulation_hmi/README.md.
 // ----------------------------------------------------------------------------
 typedef enum : uint32_t {
     FAULT_NONE              = 0,
-    FAULT_OVERCURRENT       = 1u << 0,   // VPROPI > threshold
+    FAULT_OVERCURRENT       = 1u << 0,   // mocked in sim; deprecated in v2.2 production firmware (L293L has no IS pin)
     FAULT_STALL             = 1u << 1,   // Motor on but no position change
-    FAULT_LIMIT_BOTH        = 1u << 2,   // Top AND bottom limit asserted (impossible)
-    FAULT_POS_OUT_OF_RANGE  = 1u << 3,   // Hall/encoder reads invalid
+    FAULT_LIMIT_BOTH        = 1u << 2,   // Top AND bottom limit asserted (impossible with diode-OR)
+    FAULT_POS_OUT_OF_RANGE  = 1u << 3,   // Position pot read outside band
     FAULT_WATCHDOG          = 1u << 4,   // Software watchdog timeout
     FAULT_VISION_LINK_LOST  = 1u << 5,   // No JSON from ESP32-CAM > 2s
     FAULT_ULTRASONIC_FAIL   = 1u << 6,   // Both ultrasonics timed out

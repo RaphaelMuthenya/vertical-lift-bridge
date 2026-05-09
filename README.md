@@ -1,6 +1,6 @@
 # Automatic Vertical Lift Bridge Control System
 
-**Group 7  ·  EEE 2412 Microprocessors II  ·  JKUAT  ·  May 2026**
+**Group 7  ·  EEE 2412 Microprocessors II  ·  JKUAT  ·  May 2026  ·  v2.2**
 
 A scale-model vertical-lift bridge that autonomously raises its deck for marine traffic and lowers it for road traffic, controlled by a dual-ESP32 architecture (main controller + ESP32-CAM vision companion), with a TFT operator dashboard, a hardware safety chain, and a fully parametric mechanical and electronic design.
 
@@ -60,12 +60,12 @@ The system runs a complete bridge-opening cycle without human input. In plain En
 3. **Stop the road.** Traffic lights cycle green → amber → red. Servo barriers swing down. A buzzer chirps twice as a courtesy alert.
 4. **Balance counterweights.** A simulated dynamic counterweight system models two water tanks being filled/drained by pumps and valves to balance the deck mass. The firmware simulates water levels, pump status, and drain valve state — all visualised in real time on the TFT dashboard. The physical counterweights remain static (lead-filled boxes); the simulation runs in parallel for demonstration purposes. The FSM waits for the simulated counterweights to report "balanced" before proceeding.
 5. **Verify clearance.** The system confirms both barriers reached their down position, no vehicle remains in the bridge zone, and the simulated counterweights are balanced before raising.
-6. **Raise the bridge.** A JGA25-370 12 V gearmotor drives a Ø30 mm aluminium drum, winding cables that lift the deck. Two 120 g static counterweights run on opposite cables over top pulleys to balance the deck mass. A Hall-effect encoder on the motor shaft tracks deck height in millimetres.
-7. **Hold for marine traffic.** When the top limit switch trips, the motor brakes electronically (BTS7960 dynamic short brake). Marine traffic lights turn green. The bridge holds for 8 seconds (`HOLD_TIMEOUT_MS`, configurable in `system_types.h`).
+6. **Raise the bridge.** A JGA25-370 12 V gearmotor drives a Ø30 mm aluminium drum through an L293L H-bridge module, winding cables that lift the deck. Two 120 g static counterweights run on opposite cables over top pulleys to balance the deck mass. A 10 kΩ deck-position potentiometer reports deck height in millimetres.
+7. **Hold for marine traffic.** When the top limit switch trips, the motor brakes electronically (L293L dynamic short brake — both inputs HIGH). Marine traffic lights turn green. The bridge holds for 8 seconds (`HOLD_TIMEOUT_MS`, configurable in `system_types.h`).
 8. **Lower the bridge.** The motor drives down at lower duty (gravity-assisted) until the bottom limit switch trips. Counts/mm calibration auto-zeroes the encoder at the bottom.
 9. **Reopen the road.** Barriers raise, traffic lights cycle amber → green for road, red for marine. The system returns to idle.
 
-A 2.8-inch TFT touch dashboard mirrors the system state in real time and provides operator controls (manual raise/lower, fault clear, brightness, screen navigation). A mushroom emergency-stop button cuts motor power through a hardware relay independent of the firmware. A 16-flag fault register catches stalls, overcurrent, undervoltage, sensor link loss, watchdog timeouts, and barrier reach failures.
+A 2.8-inch TFT touch dashboard mirrors the system state in real time and provides operator controls (manual raise/lower, fault clear, brightness, screen navigation), backed up by a 5-button resistor-ladder front panel as a defence-in-depth input path. A mushroom emergency-stop button cuts motor power through a hardware relay independent of the firmware. A 16-flag fault register catches stalls, sensor link loss, watchdog timeouts, and barrier reach failures (overcurrent and undervoltage flags are reserved but not raised in v2.2 — the hardware lacks the matching sense pins; see `docs/known_limitations.md`).
 
 This README is non-prescriptive about what every screen of the dashboard looks like — that is M4's creative-liberty zone. The firmware ships every screen as a working LVGL stub with infrastructure complete (TFT_eSPI driver, double-buffered DMA flush, XPT2046 touch, async-call thread-safety, screen registry); M4 designs the visuals.
 
@@ -92,8 +92,8 @@ The control logic runs on **two ESP32 microcontrollers** that communicate over a
 │         │                                                       │
 │  ┌──────▼─────────┐  ┌───────────────┐  ┌───────────────┐       │
 │  │  Motor Task    │  │ Safety Task   │  │   HMI Task    │       │
-│  │  BTS7960 PWM   │  │ E-stop, fault │  │   LVGL/TFT    │       │
-│  │  Hall encoder  │  │ Watchdog kick │  │   Touch input │       │
+│  │  L293L PWM     │  │ E-stop, fault │  │   LVGL/TFT    │       │
+│  │  Pot position  │  │ Watchdog kick │  │   Touch input │       │
 │  └────────────────┘  └───────────────┘  └───────────────┘       │
 │       Core 0              Core 0              Core 1            │
 └─────────────────────────────────────────────────────────────────┘
@@ -107,10 +107,10 @@ The control logic runs on **two ESP32 microcontrollers** that communicate over a
 
 **Key architectural choices** (rationale in [`docs/audit_report.md`](./docs/audit_report.md)):
 - **Two towers, not four.** A vertical-lift mechanism with cable + counterweight is mechanically simpler than the original four-tower lead-screw + GT2 belt design — one fewer alignment surface to mis-align.
-- **Cable + counterweight, not lead-screw.** Counterweights reduce the motor's nominal lift current from ~1500 mA to ~600 mA, allowing a smaller motor and BTS7960 well below its 5.5 A drop-out.
+- **Cable + counterweight, not lead-screw.** Counterweights reduce the motor's nominal lift current from ~1500 mA to ~600 mA, allowing a smaller motor and a 2 A H-bridge (L293L module) instead of an over-spec'd power driver.
 - **ESP32-CAM, not IR retro-reflective.** Vision over UART JSON is observable and debuggable; IR analog levels are not, especially under fluorescent lab lighting.
-- **Hardware limit switches, not software estimate alone.** Microswitches at top and bottom of one tower override any firmware estimate, fail-safe to STOP.
-- **Hardware E-stop relay, not just GPIO interrupt.** The relay sits in series with motor V+ on the BTS7960, so a wire cut, firmware crash, or stuck task cannot prevent stopping.
+- **Hardware limit switches, not software estimate alone.** Microswitches at top and bottom of each tower override any firmware estimate, fail-safe to STOP.
+- **Hardware E-stop relay, not just GPIO interrupt.** A SRD-05VDC relay sits in series with motor B+, switched by a ULN2803 channel from GPIO 32, so a wire cut, firmware crash, or stuck task cannot prevent stopping.
 - **HMI on Core 1, everything else on Core 0.** LVGL is non-reentrant and benefits from a dedicated core. All cross-core HMI calls go through `lv_async_call()`.
 
 ---
@@ -119,17 +119,19 @@ The control logic runs on **two ESP32 microcontrollers** that communicate over a
 
 | Subsystem | Components | Notes |
 |-----------|------------|-------|
-| Frame | 2× printed towers, MGN12 200 mm rails, MDF base 1200 × 600 × 12 mm | Towers PLA, 40% gyroid infill |
-| Drive | JGA25-370 12 V gearmotor, Ø30 mm aluminium drum, 1 mm braided steel cable | ~600 mA nominal at full lift |
-| Counterweights | 2× printed boxes, 4× 30 g lead, 608ZZ pulley bearings, M8×80 axles | 120 g per side (static). Firmware simulates dynamic water-tank counterweights with pump/drain — displayed on TFT |
-| Sensors | 2× HC-SR04 ultrasonics, ESP32-CAM OV2640, 4× KW11-3Z limit switches | Ultrasonic ECHO line via 1 kΩ/2 kΩ divider — 5 V down to 3.3 V |
-| Actuators | 2× SG90 servos (barriers), 6× SMD LEDs (traffic), passive piezo buzzer | LEDs driven by 74HC595 chain |
-| Display | ILI9341 2.8" 240×320 TFT + XPT2046 touch | HSPI bus on the main ESP32 |
-| Safety | 16 mm mushroom NC E-stop, SRD-05VDC-SL-C relay, 2N7000 coil driver | Relay coil de-energised by default |
-| Power | 12 V/3 A barrel input, LM2596 12→5 V buck, AMS1117 5→3.3 V LDO | TVS, polyfuse, Schottky reverse-protection |
+| Frame | 2× printed towers, MGN12 200 mm rails, MDF base 1200 × 600 × 12 mm | Towers PLA, 25–40% gyroid infill |
+| Drive | JGA25-370 12 V gearmotor (100 RPM, Hall-encoded), Ø30 mm aluminium drum, 1 mm braided steel cable, L293L H-bridge module (2 A) | ~600 mA nominal at full lift; module's EN tied HIGH so PWM rides on IN1/IN2 |
+| Counterweights | 2× printed boxes, 4× 60 g lead, 608ZZ pulley bearings, M8×80 axles | 120 g per side (static). Firmware simulates dynamic water-tank counterweights with pump/drain — displayed on TFT |
+| Sensors | 4× HC-SR04 ultrasonics (2 upstream + 2 downstream pairs, 3 cm beam spacing), ESP32-CAM OV2640, 4× KW11-3Z limit switches | Ultrasonic ECHO line via 1 kΩ/2 kΩ divider — 5 V down to 3.3 V |
+| Actuators | 2× SG90 servos (barriers), 6× 0805 SMD LEDs (traffic), passive piezo buzzer | LEDs driven by 74HC595 chain; buzzer driven via ULN2803 channel from LEDC |
+| Display | ILI9341 2.8" 240×320 TN TFT + XPT2046 touch (TJCTM24028-SPI module) | HSPI bus on the main ESP32; backlight switched by ULN2803 channel under LEDC PWM |
+| Operator panel | 16 mm mushroom NC E-stop + 5-button resistor-ladder (RAISE / LOWER / HOLD / CLEAR / NEXT) | Front-panel ladder is back in v2.2 alongside the touchscreen — see input.cpp |
+| Safety | 16 mm mushroom NC E-stop, SRD-05VDC-SL-C relay, ULN2803 coil driver | Relay coil de-energised by default |
+| Power | 12 V/3 A barrel input, LM1084 12→5 V buck module, AMS1117 5→3.3 V LDO | SMBJ15CA TVS, 2 A polyfuse, SS54 Schottky reverse-protection |
 | Compute | ESP32-WROOM-32E DevKit (main), ESP32-CAM AI-Thinker (vision) | CAM 5 V from a separate buck — never share with main |
+| Programming | CH340G USB-UART (programming header on PCB) + DevKit's onboard CH340/CP2102 | Either can flash the main board |
 
-Procurement targets Kenyan suppliers — full priced list in [`bom/VLB_Group7_BOM.xlsx`](./bom/VLB_Group7_BOM.xlsx). Grand total **KES 24,825**, broken into Mechanical (12,510), Electronics + TFT + CAM (5,995), PCB Fab (4,110), and Consumables (1,850). All formulas are live — change a unit price or quantity and the spreadsheet recalculates.
+Procurement targets Kenyan suppliers — full priced list in [`bom/VLB_Group7_BOM.xlsx`](./bom/VLB_Group7_BOM.xlsx) (PDF snapshot at [`bom/VLB_Group7_BOM_Final.pdf`](./bom/VLB_Group7_BOM_Final.pdf)). Grand total **KES 25,678**, broken into Mechanical (14,720), Electronics + TFT + CAM (4,998), PCB Fab + Assembly (4,110), and Consumables + Misc (1,850). All formulas in the spreadsheet are live — change a unit price or quantity and totals recalculate.
 
 ---
 
@@ -223,7 +225,7 @@ vertical-lift-bridge/
 │       ├── counterweight/       # ◄── M2 (simulation logic)
 │       │   └── counterweight.h/.cpp # Simulated pump/drain water tanks
 │       ├── motor/               # ◄── M2
-│       │   └── motor_driver.h/.cpp  # BTS7960 PWM, encoder, current sense
+│       │   └── motor_driver.h/.cpp  # L293L PWM, deck-position pot, limit discrim
 │       ├── sensors/             # ◄── M3
 │       │   └── ultrasonic.h/.cpp    # Dual HC-SR04, direction inference
 │       ├── vision/              # ◄── M3
@@ -257,7 +259,8 @@ vertical-lift-bridge/
 │
 └── pcb/                         ◄── M5
     ├── gerbers/                 # JLCPCB-ready Gerber + drill files
-    └── kicad-project/           # KiCad 8 schematic + layout files
+    └── kicad-project/           # KiCad 10.x — recreated from scratch in v2.2
+                                 # (see member_guides/M5 for the build steps)
 ```
 
 **Empty directories** (`firmware/include/`, `firmware/lib/`, `firmware/test/`) are placeholders held in Git via `.gitkeep`. They are wired into the PlatformIO build path so any file dropped into them compiles automatically.
@@ -297,7 +300,7 @@ These are the canonical versions every member should install. Mismatched version
 | Arduino IDE | 2.3.x | Easier ESP32-CAM upload than PIO | M3 |
 | OpenSCAD | 2021.01 or newer | Edit `.scad` files | M2, M5 |
 | PrusaSlicer | 2.7.x | Convert STL to G-code | M2 |
-| KiCad | 8.0.x | Schematic + PCB editor | M5 |
+| KiCad | 10.0.x | Schematic + PCB editor | M5 |
 
 Skip what doesn't apply to you — for example, M4 doesn't need KiCad, M5 doesn't need a slicer.
 
@@ -752,9 +755,9 @@ Slicer profile and print order are documented in [`cad/README_cad.md`](./cad/REA
 
 ## 16. Working with the PCB
 
-PCB design lives in [`pcb/kicad-project/`](./pcb/kicad-project/). To open:
+PCB design lives in [`pcb/kicad-project/`](./pcb/kicad-project/). The v2.2 project is built **from scratch in KiCad 10.x** following [`member_guides/M5_Ian_PCB_Power_Safety.md`](./member_guides/M5_Ian_PCB_Power_Safety.md) — the previous KiCad 8 project was deleted on 2026-05-03 because it had drifted from the firmware pin map. To open the new project:
 
-1. Launch KiCad 8.
+1. Launch KiCad 10.0.x.
 2. **File → Open Project** → navigate to `pcb/kicad-project/` and pick the `.kicad_pro` file.
 
 Both schematic and PCB editors open from the project window.
@@ -763,7 +766,7 @@ To regenerate Gerbers (after edits):
 
 1. PCB Editor → **File → Plot**.
 2. Output directory: `pcb/gerbers/`.
-3. See `member_guides/M5_Ian_PCB_Power_Safety.md` §5 for the exact layer/option settings JLCPCB expects.
+3. See `member_guides/M5_Ian_PCB_Power_Safety.md` §8 for the exact layer/option settings JLCPCB expects.
 
 ---
 
@@ -792,7 +795,7 @@ Day-to-day coordination, quick questions, "I'm pushing X now", "I broke main, so
 For anything that needs to be tracked across days. Things that should be issues, not chat:
 - "Motor stalls 2 cm before top limit — repro: every cycle"
 - "TFT shows ghosting on boot screen — looks like buffer alignment"
-- "BOM line 23 — Pixel Electric out of stock on 2N7000, need substitute"
+- "BOM line 12 — Pixel Electric out of stock on ULN2803, need substitute"
 
 Don't put these in the chat alone — chat history evaporates, issues persist.
 
@@ -860,11 +863,11 @@ For deeper firmware debugging, every module logs to Serial with a `[xxx]` prefix
 | HSPI | Hardware SPI bus on the ESP32 — TFT and touch share this |
 | UART | Serial port — the main board talks to the CAM over UART2 |
 | TWDT | Task Watchdog Timer — ESP32 hardware safety reset if a task hangs |
-| BTS7960 | The 43 A H-bridge motor driver IC |
+| L293L | The 2 A H-bridge motor-driver module that drives the JGA25-370 (BOM line 2) |
 | HC-SR04 | The ultrasonic distance sensor module |
 | OV2640 | The 2 MP camera sensor on the ESP32-CAM |
 | MGN12 | A 12 mm-wide miniature linear rail |
-| Hall encoder | Magnetic rotary encoder built into the JGA25-370 motor |
+| Deck pot | 10 kΩ linear potentiometer mechanically coupled to deck travel — drives `g_status.deck_position_mm` |
 | PAT | Personal Access Token — GitHub's password-replacement for HTTPS auth |
 | Counts/mm | Encoder pulses per millimetre of deck travel — the calibration constant |
 | ROI | Region Of Interest — the patch of the camera frame where motion is checked |

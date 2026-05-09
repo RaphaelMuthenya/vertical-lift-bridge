@@ -105,11 +105,24 @@ void fsm_engine_handle(SystemEvent_t evt) {
     case STATE_RAISING:
         if (evt == EVT_TOP_LIMIT_HIT) {
             enter_state(STATE_RAISED_HOLD);
+        } else if (evt == EVT_OPERATOR_HOLD) {
+            // Mid-travel freeze: brake the motor and present the same
+            // recovery options as if we'd reached the top early. The
+            // existing RAISED_HOLD auto-timeout then either lowers the
+            // deck after HOLD_TIMEOUT_MS or yields to operator LOWER.
+            enter_state(STATE_RAISED_HOLD);
         }
         break;
 
     case STATE_RAISED_HOLD:
-        if (evt == EVT_HOLD_TIMEOUT || evt == EVT_OPERATOR_LOWER) {
+        // EVT_HOLD_TIMEOUT has no separate producer task — it is fired
+        // here from the periodic EVT_TICK_100MS when the state age
+        // exceeds HOLD_TIMEOUT_MS. This keeps the autonomous cycle
+        // self-driving without requiring an operator press.
+        if (evt == EVT_OPERATOR_LOWER) {
+            enter_state(STATE_LOWERING);
+        } else if (evt == EVT_TICK_100MS &&
+                   fsm_engine_state_age_ms() >= HOLD_TIMEOUT_MS) {
             enter_state(STATE_LOWERING);
         }
         break;
@@ -117,6 +130,9 @@ void fsm_engine_handle(SystemEvent_t evt) {
     case STATE_LOWERING:
         if (evt == EVT_BOTTOM_LIMIT_HIT) {
             enter_state(STATE_ROAD_OPENING);
+        } else if (evt == EVT_OPERATOR_HOLD) {
+            // Same mid-travel freeze treatment as RAISING.
+            enter_state(STATE_RAISED_HOLD);
         }
         break;
 

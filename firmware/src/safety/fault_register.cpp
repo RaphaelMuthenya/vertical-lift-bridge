@@ -6,18 +6,20 @@
 // the first time any flag becomes set (rising edge), and EVT_FAULT_CLEARED
 // on the falling edge.
 //
-// NOTE on rail monitoring: 12 V / 5 V rail ADC reads were removed in v2.1
-// because the only available ADC pins (GPIO 34/35) are already owned by the
-// BTS7960 IS pin and the deck-position potentiometer, which present low
-// source impedance at all times. A high-impedance voltage divider on the same
-// pin would be swamped by the motor sense circuitry — software-only
-// multiplexing cannot fix the analog conflict. Brownout protection now
-// relies on:
-//   • ESP32 internal brownout detector
-//   • BTS7960 built-in undervoltage lockout
-//   • LM2596 thermal/current limit
-// rail_*_volts fields remain in SharedStatus_t but are set to -1.0f (sentinel
-// meaning "not measured"). See docs/known_limitations.md.
+// NOTE on rail monitoring (v2.2): rail ADC reads stay disabled. GPIO 34
+// is now the operator-panel resistor ladder, GPIO 35 is the deck-position
+// pot — neither pin is available for a high-impedance voltage divider.
+// Brownout protection therefore relies on hardware layers only:
+//   • ESP32 internal brownout detector (3.3 V rail < 2.43 V → reset)
+//   • L293L internal thermal-shutdown (cuts H-bridge on overheat)
+//   • LM1084 buck-module internal current/thermal limit
+// rail_*_volts fields remain in SharedStatus_t but are set to -1.0f
+// (sentinel: "not measured"). See docs/known_limitations.md.
+//
+// NOTE on motor current (v2.2): the L293L module has no current-sense
+// output, so FAULT_OVERCURRENT is also never set in v2.2. Motor abuse is
+// caught by FAULT_STALL (no position change while energised) and the
+// L293L's own thermal cutout.
 // ============================================================================
 #include "fault_register.h"
 #include "../system_types.h"
@@ -78,7 +80,7 @@ void fault_register_clear_all(void) {
 }
 
 const char* fault_register_first_name(uint32_t flags) {
-    if (flags & FAULT_OVERCURRENT)      return "overcurrent";
+    if (flags & FAULT_OVERCURRENT)      return "overcurrent(deprecated)";
     if (flags & FAULT_STALL)            return "stall";
     if (flags & FAULT_LIMIT_BOTH)       return "both-limits";
     if (flags & FAULT_POS_OUT_OF_RANGE) return "pos-range";

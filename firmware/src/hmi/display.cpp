@@ -190,11 +190,12 @@ static lv_obj_t* screen_create_main(void) {
 // --- TELEMETRY SCREEN ------------------------------------------------
 // TODO (M4): real-time numbers. Suggested bindings:
 //   - s_local.motor_pwm_duty      : bar 0..8191 -> 0..100%
-//   - s_local.motor_current_ma    : arc gauge 0..MOTOR_OVERCURRENT_MA
+//   - s_local.motor_current_ma    : v2.2 always 0 (no IS pin on L293L);
+//                                    skip this gauge until v3 PCB adds INA169
 //   - s_local.deck_position_mm    : meter 0..DECK_HEIGHT_MAX_MM
 //   - s_local.last_cycle_duration_ms : label "Last cycle: 18.2s"
 //   - s_local.uptime_ms           : label HH:MM:SS
-//   - s_local.rssi_dbm, cpu_load_*, rail_*_volts
+//   - s_local.rssi_dbm, cpu_load_*, rail_*_volts (rails are -1.0f sentinel in v2.2)
 //
 // COUNTERWEIGHT SIMULATION BINDINGS (new):
 //   - s_local.counterweight.left.water_level_ml  : vertical bar 0..CW_TANK_CAPACITY_ML

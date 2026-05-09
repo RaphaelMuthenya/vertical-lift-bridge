@@ -22,6 +22,8 @@
 #include "traffic/buzzer.h"
 #include "hmi/display.h"
 #include "hmi/input.h"
+// task_safety drives traffic_lights_tick / buzzer_tick / input_tick
+// (see below) — these headers are pulled in for those calls.
 #include "counterweight/counterweight.h"
 #include "safety/watchdog.h"
 #include "safety/fault_register.h"
@@ -128,6 +130,7 @@ void setup() {
     traffic_lights_init();
     buzzer_init();
     counterweight_init();
+    input_init();
 
     // HMI is started inside task_hmi (must run on Core 1 for LVGL).
     Serial.println("[boot] Peripherals OK");
@@ -227,10 +230,24 @@ static void task_vision(void* arg) {
 // ===========================================================================
 static void task_safety(void* arg) {
     TickType_t last = xTaskGetTickCount();
+    uint8_t   slow_div = 0;
     for (;;) {
         interlocks_evaluate();
         fault_register_evaluate();
         safety_watchdog_check_all();
+
+        // Operator panel scan: 20 Hz is plenty for a 5-button resistor ladder.
+        input_tick();
+
+        // Traffic lights + buzzer: drive at 10 Hz (every 2nd safety tick).
+        // Lower than safety so blink phase is human-pleasant; higher than
+        // task_telemetry so state changes are visible within ~100 ms.
+        if (++slow_div >= 2) {
+            slow_div = 0;
+            traffic_lights_tick();
+            buzzer_tick();
+        }
+
         vTaskDelayUntil(&last, pdMS_TO_TICKS(50));   // 20 Hz
     }
 }

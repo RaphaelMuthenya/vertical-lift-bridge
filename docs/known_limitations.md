@@ -1,71 +1,82 @@
-# Known Limitations — VLB v2.1
+# Known Limitations — VLB v2.2
 
-This document records design constraints that ship with the v2 hardware and the
-v3 fix path for each. None of these prevent the project from meeting its
-EEE 2412 demo requirements; they are honest engineering trade-offs forced by
-the ESP32-WROOM-32 GPIO budget.
+This document records design constraints that ship with the v2.2 hardware
+and the v3 fix path for each. None prevent the project from meeting its
+EEE 2412 demo requirements; they are honest engineering trade-offs forced
+by the ESP32-WROOM-32E GPIO budget and the components specified in the
+final BOM.
+
+History note: v2.1 removed rail monitoring and the operator-panel
+resistor ladder because both shared GPIO 34 with the BTS7960 IS pin
+(impedance collision). v2.2 migrates the motor driver to the L293L
+module per the final BOM — the L293L has no current-sense output, so
+GPIO 34 is freed and the resistor ladder is restored. Rail monitoring
+remains disabled because GPIO 35 is still occupied by the deck-position
+pot.
 
 ---
 
-## L1 — ADC pin budget exhaustion
+## L1 — No rail-voltage sensing
 
 ### Symptom
-Three logical ADC consumers want GPIO 34 (ADC1_CH6) and two want GPIO 35
-(ADC1_CH7). All sources are wired to the same physical pin with no analog
-multiplexer, so the voltage actually present on the pin is the
-impedance-weighted average of every connected source.
+The 12 V and 5 V rails are not measured by firmware. `g_status.rail_*_volts`
+fields stay at the `-1.0f` "not measured" sentinel and `FAULT_UNDERVOLT_12V`
+is reserved-but-never-set.
 
-### Affected functionality (v1 design intent → v2.1 actual)
+### Why
+Every ADC pin available to the ESP32-WROOM-32E is occupied by another
+peripheral that presents a low source impedance:
 
-| Feature | v1 intent | v2.1 reality | Mitigation |
+| GPIO | Owner | Source impedance | Why we can't share |
 |---|---|---|---|
-| 12 V rail undervoltage detection | Read divider tap on GPIO 34 | **Removed** | ESP32 brownout + BTS7960 UVLO + LM2596 thermal limit |
-| 5 V rail undervoltage detection | Read divider tap on GPIO 35 | **Removed** | Same as above |
-| Front-panel 5-button resistor ladder | Read 5 voltage bands on GPIO 34 | **Removed** | Touchscreen is the sole HMI input device |
-| BTS7960 motor current sense | Read IS pin on GPIO 34 | **Active** (sole owner) | — |
-| Deck position potentiometer | Read wiper on GPIO 35 | **Active** (sole owner) | — |
+| 32 | (relay drive output) | (output) | not an input |
+| 33 | TOUCH_CS (XPT2046) | (output) | not an input |
+| 34 | BTN_LADDER (5-button R-ladder) | ~1 kΩ | dominates over a 7.7 kΩ Thevenin divider |
+| 35 | DECK_POSITION pot wiper | ~5 kΩ | same — wiper potential always pulled to slider position |
+| 36 | TOUCH_IRQ | (input-only, pen-down level) | not free |
+| 39 | LIMIT_ANYHIT (diode-OR) | (input-only, switch state) | not free |
 
-### Why software multiplexing doesn't fix it
-The pin_config.h v2.0 comments described a "multiplexed by FSM state" scheme
-where each consumer would read only when the others were idle. This works for
-ADC *contention* (only one task drives the SAR converter at a time, which
-Arduino's `analogRead()` mutex already guarantees), but it does **not** fix
-the *electrical* problem: the BTS7960 IS pin and the deck-position pot are
-always electrically connected and always presenting low source impedance.
-A high-impedance voltage divider tied to the same pin is swamped.
+A high-impedance voltage divider on any of these pins would be swamped
+by the existing source. Software-only "FSM-state multiplexing" cannot
+fix it — the impedance collision is present whether we read or not.
 
-Worked example with BTS7960 IS (~1 kΩ) + 12 V divider (33k/10k, ~7.7 kΩ Thevenin):
-```
-V_pin ≈ (V_div × R_BTS + V_BTS × R_div) / (R_BTS + R_div)
-      ≈ (2.79 × 1k + 0 × 7.7k) / (1k + 7.7k)
-      ≈ 0.32 V   →  reported as ~1.4 V (wrong by 10×)
-```
+### Mitigation in v2.2
+Brownout protection is layered in hardware only:
+- **ESP32 internal brownout detector** — trips at ~2.43 V on the 3.3 V rail and resets.
+- **L293L thermal-shutdown** — built-in over-temperature cutout on the H-bridge silicon.
+- **LM1084 module current/thermal limit** — protects the 5 V rail from sustained overload.
 
 ### v3 fix path
 Add a **74HC4051** 8-channel analog mux on the next PCB revision. Cost ≈ KES 80,
-1 IC + 0.1 µF decoupling + 3 GPIOs for select lines. This gives 8 ADC channels
-through one ESP32 pin and resolves every collision in this table.
+1 IC + 0.1 µF decoupling + 3 GPIOs for select lines. This gives 8 ADC
+channels through one ESP32 pin and resolves every collision in this
+table — restores rail sense AND any future analog peripheral.
 
 ---
 
 ## L2 — Single GPIO for top + bottom limit switches
 
 ### Symptom
-The PCB diode-ORs all eight KW12-3 limit switches into a single
-`PIN_LIMIT_ANYHIT` (GPIO 39). Firmware can detect *that* a limit was hit but
-not *which* limit electrically.
+The PCB diode-ORs all four KW11-3Z limit switches into a single
+`PIN_LIMIT_ANYHIT` (GPIO 39). Firmware can detect *that* a limit was hit
+but not directly *which* limit electrically.
 
-### v2.1 mitigation
-`motor_driver.cpp` discriminates top vs bottom by inspecting
-`g_status.deck_position_mm`: if the position is above the deck midpoint when
-ANYHIT goes active, treat as TOP_LIMIT_HIT; below midpoint → BOTTOM_LIMIT_HIT.
-This works in practice because the bridge cannot be at both ends simultaneously
-and the position estimate is accurate to ±3 mm via the deck pot.
+### v2.2 mitigation
+`motor_driver.cpp::motor_driver_tick()` discriminates top vs bottom by
+reading `pos_mm` (derived from the deck-position pot) at the moment ANYHIT
+goes active: above `DECK_HEIGHT_MAX_MM / 2` → `EVT_TOP_LIMIT_HIT`,
+otherwise → `EVT_BOTTOM_LIMIT_HIT`. The deck cannot physically be at both
+ends simultaneously, and the pot is accurate to ±3 mm — comfortably
+inside the half-deck-height (87 mm) margin of error for the
+discriminator.
+
+The earlier v2.1 firmware noted this discrimination as design intent but
+did not actually implement it; v2.2 closes that gap.
 
 ### v3 fix path
-Either route TOP and BOTTOM through two GPIOs (GPIO 36 + GPIO 39 are both
-input-only ADC pins; trade against TOUCH_IRQ which currently owns 36), or
-use the same 74HC4051 from L1 to read individual switches sequentially.
+Either route TOP and BOTTOM through two separate GPIOs (would consume
+the GPIO 36 / 39 pair), or use the same 74HC4051 from L1 to read
+individual switches sequentially.
 
 ---
 
@@ -73,68 +84,106 @@ use the same 74HC4051 from L1 to read individual switches sequentially.
 
 ### Symptom
 ESP32 GPIOs 34–39 are input-only and have **no internal pull-up or pull-down**.
-`pinMode(PIN_LIMIT_ANYHIT, INPUT_PULLUP)` in motor_driver.cpp silently does
-nothing on GPIO 39.
+Setting `pinMode(PIN_LIMIT_ANYHIT, INPUT)` requires an external pull-up.
 
-### v2.1 mitigation
-External 10 kΩ pull-up resistor to 3.3 V on the PCB at the limit-switch input
-node, before the diode-OR network. Verify with a multimeter before first
+### v2.2 mitigation
+External 10 kΩ pull-up resistor to +3.3 V on the PCB at the limit-switch
+input node, before the diode-OR network. Verified in
+`ConnectorsSafety.kicad_sch` as `R_pu_39` and listed in the BOM under
+"Resistor ladder kit" (item 18). Verify with a multimeter before first
 power-up.
 
 ### v3 fix path
-Same as v2.1 — the external pull-up is the right answer; just make sure it's
-explicitly populated on the BOM (currently R23 in `ConnectorsSafety.kicad_sch`).
+Same as v2.2 — the external pull-up is the right answer; just make sure
+it's explicitly populated.
 
 ---
 
 ## L4 — UART0 / US4 GPIO sharing
 
 ### Symptom
-PIN_US4_TRIG (GPIO 1) and PIN_US4_ECHO (GPIO 3) are also UART0 TX/RX. While
-the USB-UART bridge is connected (programming or serial monitor), US4 readings
-are corrupted.
+`PIN_US4_TRIG` (GPIO 1) and `PIN_US4_ECHO` (GPIO 3) are also UART0 TX/RX.
+While the USB-UART bridge (CH340G or the DevKit's onboard CP2102) is
+connected for programming or serial monitor, US4 readings are corrupted.
 
-### v2.1 mitigation
+### v2.2 mitigation
 - Programming: hold BOOT, flash, release. After boot, US4 is functional.
-- Serial monitor: dev-only. For demo, disconnect USB-C and rely on touchscreen
-  diagnostics, or accept that US4 will report `0xFFFF` (no echo) when USB is
-  attached. Direction inference still works from US3 alone in that mode.
+- Serial monitor: dev-only. For the demo, disconnect USB-C and rely on
+  the touchscreen + resistor-ladder panel for diagnostics, or accept
+  that US4 will report `0xFFFF` (no echo) when USB is attached.
+  Direction inference from the downstream pair still works on US3 alone
+  in that mode.
 
 ### v3 fix path
-Move US4 to the GPIO pair freed when L1 is fixed (the 74HC4051 frees up
-GPIO 22 / GPIO 23 currently shared with servos and US3).
+Move US4 to the GPIO pair freed when L1 is fixed (the 74HC4051 frees
+GPIO pins currently shared with servos and US3).
 
 ---
 
 ## L5 — GPIO conflicts accepted via time-division
 
-These are **documented in pin_config.h** as intentional design compromises:
+These are **documented in `pin_config.h`** as intentional design compromises:
 
 | GPIO | Owners | Resolution |
 |---|---|---|
 | 5 | PIN_SERVO_LEFT + PIN_US1_TRIG | Servos move only when motor idle; ultrasonics off during barrier sweep |
 | 21 | PIN_595_OE_N + PIN_US2_ECHO | Sensor task disables ultrasonic ISRs while shifting LED bytes (~100 µs) |
 | 22 | PIN_SERVO_RIGHT + PIN_US3_TRIG | Same as GPIO 5 |
-| 0 | PIN_BUZZER + PIN_ESTOP_IRQ + BOOT strapping | E-stop has separate hardware path; buzzer is PNP-driven HIGH-idle |
+| 0 | PIN_BUZZER + PIN_ESTOP_IRQ + BOOT strapping | E-stop has separate hardware path; buzzer is driven through a ULN2803 channel only after boot |
 | 1 | PIN_BUZZER (LEDC) + PIN_US4_TRIG + UART0 TX | See L4 |
 
-These are not "limitations" in the sense that they fail — they work — but they
-are fragile and should be cleaned up in the v3 PCB respin.
+These are not "limitations" in the sense that they fail — they work — but
+they are fragile and should be cleaned up in the v3 PCB respin.
+
+---
+
+## L6 — No motor current sensing (new in v2.2)
+
+### Symptom
+The L293L module specified in the final BOM has no current-sense
+output pin. `g_status.motor_current_ma` is therefore always 0 in v2.2,
+and `FAULT_OVERCURRENT` is reserved-but-never-set.
+
+### Why
+Migrating from the original BTS7960 (which exposes an IS pin scaled at
+~8.5 mV/A) to the L293L right-sized the H-bridge to the actual ~600 mA
+load and freed GPIO 34 for the operator-panel resistor ladder (cf. L1).
+The L293L's current-sense pins (SENS1/SENS2) are not broken out on the
+common module the BOM specifies.
+
+### v2.2 mitigation
+Motor abuse is caught by two independent paths:
+- **Firmware:** `FAULT_STALL` (no position change while energised for
+  `MOTOR_STALL_TIMEOUT_MS` = 2 s).
+- **Hardware:** the L293L's internal thermal-shutdown trips at silicon
+  ~150 °C and self-recovers when temperature drops.
+
+### v3 fix path
+Either swap the motor driver back to a sense-equipped part (DRV8871,
+BTS7960, or an L298N module with the 0.1 Ω SENS resistors broken out
+to a header) or add a low-side shunt + INA169 amplifier on the v3 PCB
+fed through the 74HC4051 from L1.
 
 ---
 
 ## Summary for the lecturer demo
 
-The bridge meets all functional requirements with the v2.1 firmware:
-9-state FSM, 4 ultrasonic sensors with direction inference, ESP32-CAM vision,
-BTS7960 motor control with closed-loop position, simulated dynamic
-counterweights on the HMI, 16-flag fault register with edge-triggered FSM
-events, and full safety chain (E-stop relay, watchdog, barrier interlocks).
+The bridge meets all functional requirements with the v2.2 firmware:
+9-state FSM, 4 ultrasonic sensors with direction inference, ESP32-CAM
+vision, L293L motor control with closed-loop position from the deck
+pot, simulated dynamic counterweights on the HMI, 16-flag fault
+register with edge-triggered FSM events, full safety chain (E-stop
+relay through ULN2803, watchdog, barrier interlocks), and
+defence-in-depth operator input (touchscreen + 5-button resistor
+ladder).
 
-What the v2.1 firmware does **not** do — and the demo script should not
+What the v2.2 firmware does **not** do — and the demo script should not
 claim it does:
-- Active 12 V / 5 V rail voltage measurement on the dashboard
-- Front-panel hardware buttons (touchscreen only)
-- Per-switch limit identification (uses position-based inference instead)
+- Active 12 V / 5 V rail voltage measurement on the dashboard (L1)
+- Direct top-vs-bottom limit identification at the GPIO level (L2 — but
+  position-based discrimination is implemented; it just needs the deck
+  pot to be calibrated)
+- Motor current measurement / `FAULT_OVERCURRENT` (L6)
 
-The fix for all of these is a single 74HC4051 IC on the v3 board.
+The fix for L1, L2, L6 (and free a path for L4) is a single 74HC4051 IC
+on the v3 board.

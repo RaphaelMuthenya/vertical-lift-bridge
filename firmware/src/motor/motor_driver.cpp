@@ -1,15 +1,20 @@
 // ============================================================================
-// motor/motor_driver.cpp — BTS7960 H-bridge control + current sensing
-// + position estimate from Hall encoder pulses on JGA25-370 motor.
+// motor/motor_driver.cpp — L293L module H-bridge control
+// + position estimate from a 10 kΩ deck-position potentiometer.
 // Owner: M2 Eugene (Mechanism)
 //
 // Pin mapping (see pin_config.h):
-//   MOT_RPWM (forward/up)   — GPIO25  (LEDC ch0, 10-bit, 20 kHz)
-//   MOT_LPWM (reverse/down) — GPIO26  (LEDC ch1, 10-bit, 20 kHz)
-//   MOT_R_EN, MOT_L_EN      — tied high to 5 V on board (always enabled)
-//   MOT_VPROPI (current)    — GPIO34  (ADC1_CH6, input-only, NO pull-up)
-//   ENC_A / DECK_POSITION   — GPIO35  (ADC1_CH7, potentiometer / encoder)
+//   MOT_IN1 (forward/up)    — GPIO25  (LEDC ch0, 13-bit, 20 kHz)
+//   MOT_IN2 (reverse/down)  — GPIO26  (LEDC ch1, 13-bit, 20 kHz)
+//   MOT_EN                  — tied high to +5 V on the L293L module
+//                             (PWM rides on IN1/IN2 directly)
+//   DECK_POSITION           — GPIO35  (ADC1_CH7, potentiometer wiper)
 //   LIMIT_ANYHIT            — GPIO39  (diode-OR of all limit switches)
+//
+// Note on motor current sensing: the L293L module specified in the BOM has
+// no current-sense output. FAULT_OVERCURRENT is therefore not raised by
+// firmware — the L293L's internal thermal-shutdown handles abuse, and the
+// stall detector below covers the dominant failure mode.
 //
 // Counts/mm calibration is captured in CAL_COUNTS_PER_MM. Re-run the
 // calibration sketch (member guide M2) on each new gearmotor batch.
@@ -23,63 +28,46 @@
 // ---------------------------------------------------------------------------
 // LEDC channel configuration
 // ---------------------------------------------------------------------------
-#define LEDC_CH_RPWM    0
-#define LEDC_CH_LPWM    1
-#define LEDC_RES_BITS   13
-#define LEDC_FREQ_HZ    20000
+#define LEDC_CH_IN1     0          // motor IN1 (forward/up) PWM
+#define LEDC_CH_IN2     1          // motor IN2 (reverse/down) PWM
+#define LEDC_RES_BITS   13         // 0..8191 duty (matches MOTOR_PWM_MAX)
+#define LEDC_FREQ_HZ    20000      // above audible
 
 // ---------------------------------------------------------------------------
-// Calibration — measured by raising deck 100mm and counting pulses.
+// Calibration — measured by raising deck 100mm and counting ADC steps.
 // PLACEHOLDER: M2 Eugene must re-measure on hardware and update.
 // ---------------------------------------------------------------------------
 #define CAL_COUNTS_PER_MM      42      // From bench measurement
-#define ADC_TO_MA_NUMERATOR    1466L   // (3300 mV / 4095) * (1000 / VPROPI_R)
-#define ADC_TO_MA_DENOMINATOR  4095L
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-static volatile int32_t s_enc_count   = 0;
-static int32_t          s_enc_zero    = 0;
-static MotorDirection_t s_dir         = MOTOR_STOP;
-static uint16_t         s_duty        = 0;
+static MotorDirection_t s_dir          = MOTOR_STOP;
+static uint16_t         s_duty         = 0;
 static uint32_t         s_last_move_ms = 0;
-static int32_t          s_last_enc_for_stall = 0;
-
-// ---------------------------------------------------------------------------
-// ISR — Hall A pulses. Direction inferred from current command.
-// ---------------------------------------------------------------------------
-static void IRAM_ATTR enc_a_isr(void) {
-    if (s_dir == MOTOR_UP)        s_enc_count++;
-    else if (s_dir == MOTOR_DOWN) s_enc_count--;
-    // Brake/coast/stop: don't count (idle drift ignored)
-}
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 void motor_driver_init(void) {
-    // Limits
-    pinMode(PIN_LIMIT_TOP,    INPUT_PULLUP);
-    pinMode(PIN_LIMIT_BOTTOM, INPUT_PULLUP);
-
-    // Encoder
-    pinMode(PIN_ENC_A, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(PIN_ENC_A), enc_a_isr, RISING);
+    // Single diode-OR'd limit input — GPIO 39 has no internal pull-up,
+    // an external 10 kΩ pull-up to +3V3 is provided on the PCB (see
+    // ConnectorsSafety sub-sheet, R_pu_39).
+    pinMode(PIN_LIMIT_ANYHIT, INPUT);
 
     // PWM channels
-    ledcSetup(LEDC_CH_RPWM, LEDC_FREQ_HZ, LEDC_RES_BITS);
-    ledcSetup(LEDC_CH_LPWM, LEDC_FREQ_HZ, LEDC_RES_BITS);
-    ledcAttachPin(PIN_MOT_RPWM, LEDC_CH_RPWM);
-    ledcAttachPin(PIN_MOT_LPWM, LEDC_CH_LPWM);
-    ledcWrite(LEDC_CH_RPWM, 0);
-    ledcWrite(LEDC_CH_LPWM, 0);
+    ledcSetup(LEDC_CH_IN1, LEDC_FREQ_HZ, LEDC_RES_BITS);
+    ledcSetup(LEDC_CH_IN2, LEDC_FREQ_HZ, LEDC_RES_BITS);
+    ledcAttachPin(PIN_MOT_IN1, LEDC_CH_IN1);
+    ledcAttachPin(PIN_MOT_IN2, LEDC_CH_IN2);
+    ledcWrite(LEDC_CH_IN1, 0);
+    ledcWrite(LEDC_CH_IN2, 0);
 
-    // ADC for current sense
+    // ADC for deck-position pot (motor current sense not present on L293L)
     analogReadResolution(12);
-    analogSetPinAttenuation(PIN_MOT_VPROPI, ADC_11db);   // 0..3.3 V
+    analogSetPinAttenuation(PIN_DECK_POSITION, ADC_11db); // 0..3.3 V
 
-    Serial.println("[motor] init OK");
+    Serial.println("[motor] init OK (L293L module, no current-sense)");
 }
 
 void motor_driver_apply(const MotorCommand_t& cmd) {
@@ -89,80 +77,89 @@ void motor_driver_apply(const MotorCommand_t& cmd) {
 
     switch (s_dir) {
     case MOTOR_UP:
-        ledcWrite(LEDC_CH_LPWM, 0);
-        ledcWrite(LEDC_CH_RPWM, s_duty);
+        ledcWrite(LEDC_CH_IN2, 0);
+        ledcWrite(LEDC_CH_IN1, s_duty);
         break;
     case MOTOR_DOWN:
-        ledcWrite(LEDC_CH_RPWM, 0);
-        ledcWrite(LEDC_CH_LPWM, s_duty);
+        ledcWrite(LEDC_CH_IN1, 0);
+        ledcWrite(LEDC_CH_IN2, s_duty);
         break;
     case MOTOR_BRAKE:
-        // Active brake: drive both highs high (= shorting low side
-        // through high-side body diodes). On BTS7960 this is achieved
-        // by setting both PWM lines to 100% — motor sees Vmot+ on both
-        // terminals, which dynamically brakes.
-        ledcWrite(LEDC_CH_RPWM, MOTOR_PWM_MAX);
-        ledcWrite(LEDC_CH_LPWM, MOTOR_PWM_MAX);
+        // Dynamic short-brake on the L293L: drive both half-bridges to the
+        // same rail (here: both inputs HIGH = both motor terminals at +Vmot).
+        // The motor sees zero terminal-to-terminal voltage and the back-EMF
+        // is shorted through the high-side switches, braking the rotor.
+        ledcWrite(LEDC_CH_IN1, MOTOR_PWM_MAX);
+        ledcWrite(LEDC_CH_IN2, MOTOR_PWM_MAX);
         break;
     case MOTOR_COAST:
     case MOTOR_STOP:
     default:
-        ledcWrite(LEDC_CH_RPWM, 0);
-        ledcWrite(LEDC_CH_LPWM, 0);
+        ledcWrite(LEDC_CH_IN1, 0);
+        ledcWrite(LEDC_CH_IN2, 0);
         break;
     }
     s_last_move_ms = millis();
 }
 
 void motor_driver_tick(void) {
-    // Read current
+    // Position from the deck-position pot wiper (no Hall encoder fitted).
+    // The ADC is also available because the L293L module presents no
+    // current-sense source on this rail (cf. L1 in known_limitations.md).
     uint32_t adc_sum = 0;
-    for (int i = 0; i < 4; i++) adc_sum += analogRead(PIN_MOT_VPROPI);
+    for (int i = 0; i < 4; i++) adc_sum += analogRead(PIN_DECK_POSITION);
     int32_t adc_avg = adc_sum >> 2;
-    int32_t mA = (adc_avg * ADC_TO_MA_NUMERATOR) / ADC_TO_MA_DENOMINATOR;
+    // Map 0..4095 ADC counts to 0..DECK_HEIGHT_MAX_MM. Adjust the divisor
+    // after running the calibration sketch in member_guides/M2.
+    int16_t pos_mm = (int16_t)((adc_avg * DECK_HEIGHT_MAX_MM) / 4095);
 
-    // Read limits (active low)
-    bool top_hit = (digitalRead(PIN_LIMIT_TOP)    == LOW);
-    bool bot_hit = (digitalRead(PIN_LIMIT_BOTTOM) == LOW);
+    // Single diode-OR'd limit signal on GPIO 39 (see known_limitations L2).
+    // Discriminate top vs bottom by deck position: above midpoint -> top,
+    // below midpoint -> bottom. This was the v2.1 design intent that was
+    // not yet wired in firmware; v2.2 closes that gap.
+    bool any_hit = (digitalRead(PIN_LIMIT_ANYHIT) == LOW);
+    bool top_hit = false, bot_hit = false;
+    if (any_hit) {
+        if (pos_mm >= (DECK_HEIGHT_MAX_MM / 2)) top_hit = true;
+        else                                    bot_hit = true;
+    }
 
-    // Position from encoder
-    noInterrupts();
-    int32_t enc_now = s_enc_count;
-    interrupts();
-    int16_t pos_mm = (int16_t)((enc_now - s_enc_zero) / CAL_COUNTS_PER_MM);
+    // Auto-zero at bottom (positionally inferred)
+    if (bot_hit) pos_mm = 0;
 
-    // Auto-zero at bottom limit
-    if (bot_hit) { s_enc_zero = enc_now; pos_mm = 0; }
-
-    // Stall detection
+    // Stall detection — derived from the position estimate, not encoder.
     bool stalled = false;
+    static int16_t s_last_pos_for_stall = 0;
     if (s_dir == MOTOR_UP || s_dir == MOTOR_DOWN) {
-        if (abs(enc_now - s_last_enc_for_stall) < 5) {
+        if (abs((int)pos_mm - (int)s_last_pos_for_stall) < 1) {
             if ((millis() - s_last_move_ms) > MOTOR_STALL_TIMEOUT_MS) {
                 stalled = true;
             }
         } else {
-            s_last_enc_for_stall = enc_now;
-            s_last_move_ms = millis();
+            s_last_pos_for_stall = pos_mm;
+            s_last_move_ms       = millis();
         }
     } else {
-        s_last_enc_for_stall = enc_now;
+        s_last_pos_for_stall = pos_mm;
     }
 
-    // Push to shared status
+    // Push to shared status. motor_current_ma stays at 0 (no IS pin on
+    // L293L); FAULT_OVERCURRENT is therefore never raised by firmware in
+    // v2.2 — the L293L's internal thermal shutdown is the safety net.
     if (xSemaphoreTake(g_status_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         g_status.deck_position_mm = pos_mm;
-        g_status.motor_current_ma = (int16_t)mA;
+        g_status.motor_current_ma = 0;
         g_status.motor_pwm_duty   = s_duty;
         g_status.top_limit_hit    = top_hit;
         g_status.bottom_limit_hit = bot_hit;
-        if (mA > MOTOR_OVERCURRENT_MA)  SET_FAULT(g_status.fault_flags, FAULT_OVERCURRENT);
-        if (stalled)                    SET_FAULT(g_status.fault_flags, FAULT_STALL);
-        if (top_hit && bot_hit)         SET_FAULT(g_status.fault_flags, FAULT_LIMIT_BOTH);
+        if (stalled) SET_FAULT(g_status.fault_flags, FAULT_STALL);
+        // FAULT_LIMIT_BOTH is impossible with the diode-OR scheme (only
+        // one logical bit can be true at a time after the discriminator
+        // above) — left in the enum for v3 PCB which wires both limits.
         xSemaphoreGive(g_status_mutex);
     }
 
-    // Emit limit-hit events to FSM
+    // Emit limit-hit events to FSM (edge-triggered)
     static bool s_top_prev = false;
     static bool s_bot_prev = false;
     if (top_hit && !s_top_prev) {

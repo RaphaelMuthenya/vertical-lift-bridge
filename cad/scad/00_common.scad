@@ -28,7 +28,12 @@ TOWER_SPACING  = 800;       // tower-to-tower centre distance
 DECK_L  = 200;              // along the road
 DECK_W  = 120;              // across the road
 DECK_T  = 6;                // thickness
-DECK_LIFT = 180;            // vertical travel
+DECK_LIFT = 180;            // vertical mechanical clearance (mm).
+                            //   Intentionally 5 mm taller than the firmware
+                            //   target DECK_HEIGHT_MAX_MM = 175 in
+                            //   firmware/src/system_types.h, so the motor
+                            //   never drives the deck into a hard end-stop
+                            //   even with a calibration error.
 
 // ==== COUNTERWEIGHT ====
 CW_L  = 60;

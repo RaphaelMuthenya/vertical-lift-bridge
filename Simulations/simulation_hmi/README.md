@@ -23,8 +23,16 @@ This is a standalone PC-based simulation of the Vertical Lift Bridge dashboard. 
 
 - **Real-time Bridge Logic**: Clicking "RAISE" in the OPS tab will simulate the motor winding cables, updating the height bar and current meter.
 - **Modern Industrial Design**: Dark-mode UI with high-contrast status indicators.
-- **Shared Data Model**: Uses the exact `SharedStatus_t` struct from the main project.
+- **Shared Data Model**: Uses a copy of the `SharedStatus_t` struct from the main project (LVGL 8.3 compatible — the main firmware is on LVGL 9.2).
 - **Hardware Mocks**: Simulated ADC noise and position tracking.
+
+> **About `motor_current_ma`:** the simulation drives the current meter
+> with mocked values to demonstrate what the dashboard *will* show when
+> the v3 PCB adds an INA169 shunt amplifier. The v2.2 production
+> firmware leaves this field at 0 because the L293L motor-driver module
+> on the BOM has no current-sense pin (see `docs/known_limitations.md`
+> L6). The simulation is therefore illustrative, not predictive of v2.2
+> behaviour.
 
 ## Layout
 

@@ -57,18 +57,18 @@ typedef enum : uint8_t {
 // ----------------------------------------------------------------------------
 typedef enum : uint32_t {
     FAULT_NONE              = 0,
-    FAULT_OVERCURRENT       = 1u << 0,   // VPROPI > threshold
+    FAULT_OVERCURRENT       = 1u << 0,   // DEPRECATED v2.2 — L293L module has no current-sense output. Bit reserved; never set in v2.2.
     FAULT_STALL             = 1u << 1,   // Motor on but no position change
-    FAULT_LIMIT_BOTH        = 1u << 2,   // Top AND bottom limit asserted (impossible)
-    FAULT_POS_OUT_OF_RANGE  = 1u << 3,   // Hall/encoder reads invalid
+    FAULT_LIMIT_BOTH        = 1u << 2,   // Top AND bottom limit asserted (impossible with diode-OR; reserved for v3 PCB)
+    FAULT_POS_OUT_OF_RANGE  = 1u << 3,   // Position pot read outside 0..DECK_HEIGHT_MAX_MM band
     FAULT_WATCHDOG          = 1u << 4,   // Software watchdog timeout
     FAULT_VISION_LINK_LOST  = 1u << 5,   // No JSON from ESP32-CAM > 2s
-    FAULT_ULTRASONIC_FAIL   = 1u << 6,   // Both ultrasonics timed out
+    FAULT_ULTRASONIC_FAIL   = 1u << 6,   // All four ultrasonics timed out
     FAULT_TFT_INIT_FAIL     = 1u << 7,   // Display did not init
     FAULT_TOUCH_INIT_FAIL   = 1u << 8,   // XPT2046 did not init
     FAULT_BARRIER_TIMEOUT   = 1u << 9,   // Servo barrier did not reach target
     FAULT_RELAY_FEEDBACK    = 1u << 10,  // Relay coil energised but contact open
-    FAULT_UNDERVOLT_12V     = 1u << 11,  // DEPRECATED v2.1 — rail monitoring removed (see known_limitations.md). Bit reserved; never set in v2.1.
+    FAULT_UNDERVOLT_12V     = 1u << 11,  // DEPRECATED v2.1 — rail monitoring removed (see known_limitations.md). Bit reserved; never set.
     FAULT_OVERTEMP          = 1u << 12,  // Optional NTC > 60°C
     FAULT_CONFIG_CRC        = 1u << 13,  // NVS config CRC mismatch
     FAULT_QUEUE_OVERFLOW    = 1u << 14,  // Event queue full — events dropped
@@ -173,7 +173,7 @@ typedef struct {
     int16_t         deck_position_mm;       // 0 = down, +N = up (target N_max)
     int16_t         deck_target_mm;
     uint16_t        motor_pwm_duty;
-    int16_t         motor_current_ma;       // Signed — negative = regen (rare)
+    int16_t         motor_current_ma;       // v2.2: always 0 — L293L module has no IS output
     bool            top_limit_hit;
     bool            bottom_limit_hit;
 
@@ -224,7 +224,7 @@ typedef struct {
 #define MOTOR_PWM_MAX               8191     // 13-bit LEDC
 #define MOTOR_PWM_RAISE_DEFAULT     5500     // ~67% duty
 #define MOTOR_PWM_LOWER_DEFAULT     4500     // Lighter duty descending (gravity assist)
-#define MOTOR_OVERCURRENT_MA        2200     // BTS7960 trip threshold (well below 5.5A drop-out)
+#define MOTOR_OVERCURRENT_MA        2200     // legacy threshold (BTS7960 era); v2.2 L293L module has no IS pin so this constant is unused. Kept for source-compatibility with member-guide examples.
 #define MOTOR_STALL_TIMEOUT_MS      2000     // No position change while energised
 #define BARRIER_DOWN_ANGLE          0
 #define BARRIER_UP_ANGLE            90

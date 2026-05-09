@@ -41,7 +41,7 @@ module tower_upper_right() {
         translate([TOWER_W/2 - 4, -0.1, UPPER_H - 60])
             cube([8, TOWER_WALL + 0.2, 25]);
 
-        // limit switch screw holes (KW12-3 has 19.8 mm hole spacing, M2)
+        // limit switch screw holes (KW11-3Z has 19.8 mm hole spacing, M2)
         for (z = [25, UPPER_H - 50])
             for (x = [TOWER_W/2 - 9.9, TOWER_W/2 + 9.9])
                 translate([x, TOWER_WALL + 0.5, z])

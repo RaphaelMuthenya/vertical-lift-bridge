@@ -1,15 +1,18 @@
-# Member 5 — Ian — PCB (from scratch), Power, ESP32-CAM Electronics & Safety Firmware
+# Member 5 — Ian — PCB (from scratch), Power, ESP32-CAM Electronics & Safety Firmware (v2.2)
 
 > **Your role.** You design the PCB **from a completely blank KiCad project**, route the power tree, build the safety chain (E-stop, relay, watchdog), maintain the fault registry, and host the ESP32-CAM electronics on the same board so M3's vision link is plug-and-play. The previous KiCad project has been deleted — you start fresh.
 >
+> **Components are sourced from the final BOM** (`bom/VLB_Group7_BOM_Final.pdf`). When this guide and the BOM disagree, the BOM wins.
+>
 > **Your single deliverable.** A 100 × 80 mm 2-layer PCB, populated and tested, that:
 > - Accepts a 12 V DC barrel jack input.
-> - Generates 5 V (3 A LM2596) and 3.3 V (800 mA AMS1117) rails.
-> - Generates a separate clean 5 V/2 A rail for the ESP32-CAM via a second LM2596 (electrically isolated to prevent brownout coupling).
+> - Generates 5 V (5 A LM1084 buck module, BOM line 4) and 3.3 V (800 mA AMS1117) rails.
+> - Generates a separate clean 5 V rail for the ESP32-CAM via a second LM1084 module (electrically isolated to prevent brownout coupling).
 > - Hosts the ESP32-WROOM-32E DevKit module on female headers.
-> - Hosts the BTS7960 motor driver via screw terminals.
-> - Hosts a 5 V SRD-05VDC relay in series with motor 12 V supply (E-stop chain).
-> - Has connectors for: TFT (14-pin), ESP32-CAM (4-pin JST-XH), 4 × HC-SR04 (per-sensor JST-XH), barrier servos, traffic LED panel, mushroom E-stop, USB-C programming.
+> - Hosts the L293L motor-driver module (BOM line 2) via 6-pin female header + 4-pin screw terminal.
+> - Hosts a 5 V SRD-05VDC relay in series with motor 12 V supply (E-stop chain), driven via a ULN2803 channel.
+> - Hosts two ULN2803 Darlington arrays (BOM lines 10 + 11) for backlight, buzzer, relay coil, and four spare low-side channels.
+> - Has connectors for: TFT (14-pin), ESP32-CAM (4-pin JST-XH), 4 × HC-SR04 (per-sensor JST-XH), 5-button operator panel (6-pin JST-XH), barrier servos, traffic LED panel, mushroom E-stop, USB-C programming.
 > - Passes ERC + DRC clean, with antenna keepout enforced.
 > - Powers up cleanly: 12 V draws < 100 mA at idle, ESP32 boots, all `[xxx] init OK` lines appear.
 > - Cuts motor power within 50 ms of E-stop press (verified on bench).
@@ -22,9 +25,9 @@
 
 Three separable subsystems on one board:
 
-1. **Power tree.** 12 V in → reverse-polarity Schottky → polyfuse → TVS clamp → splits to motor (via relay) + LM2596 main (5 V, 3 A) + LM2596 CAM (5 V, isolated). 5 V main → AMS1117 → 3.3 V (800 mA).
+1. **Power tree.** 12 V in → SS54 reverse-polarity Schottky → 2 A polyfuse → SMBJ15CA TVS clamp → splits to motor (via relay) + LM1084 main (5 V, 5 A) + LM1084 CAM (5 V, isolated). 5 V main → AMS1117 → 3.3 V (800 mA).
 2. **Compute + I/O.** ESP32-WROOM-32E DevKit on female headers. All GPIOs broken out to JST-XH connectors that ribbon-cable to off-board peripherals.
-3. **Safety chain.** Mushroom NC E-stop in series with relay coil control via 2N7000 MOSFET. Relay contact in series with motor B+ supply. Watchdog firmware backs it up and forces SAFE state on hang.
+3. **Safety chain.** Mushroom NC E-stop in series with the relay-coil control path through a ULN2803 channel (driven by GPIO 32). Relay NO contact in series with motor B+ supply. Watchdog firmware backs it up and forces SAFE state on hang.
 
 The ESP32-CAM is **off-board** (mounted on the camera gantry above the road), but **its power lives on this PCB** — the dedicated CAM buck and a 4-pin JST-XH connector (J7) carry GND, V5_CAM, CAM RX (unused), and CAM TX (which becomes the main board's UART2 RX).
 
@@ -206,7 +209,7 @@ You open a project by double-clicking the `.kicad_pro` from File Explorer, or vi
 | **Schematic Editor** (eeschema) | KiCad Project Manager → schematic icon | Draw the circuit. Add symbols, wires, labels. Run ERC. |
 | **PCB Editor** (pcbnew) | KiCad Project Manager → PCB icon | Place footprints, route copper, generate Gerbers. Run DRC. |
 | **Symbol Editor** | top menu Tools → Symbol Editor | Create custom schematic symbols (rare for this project) |
-| **Footprint Editor** | top menu Tools → Footprint Editor | Create custom footprints (you'll do this once for the BTS7960 module) |
+| **Footprint Editor** | top menu Tools → Footprint Editor | Create custom footprints (rarely needed — the L293L module mounts via standard 2.54 mm headers) |
 
 ### 2.3 Hierarchical sheets (how the project splits across multiple files)
 For a project this size you don't draw everything on one giant page. You split into **hierarchical sub-sheets**, each its own `.kicad_sch` file, connected to a **root sheet** by **sheet symbols**.
@@ -218,8 +221,8 @@ Each sub-sheet exposes named **hierarchical labels** at its boundary that map to
 vertical_lift_pcb.kicad_sch        (root — just sheet symbols)
 ├── PowerSupply.kicad_sch          (12V → 5V → 3.3V tree, plus CAM-dedicated 5V)
 ├── ESP32Module.kicad_sch          (ESP32-WROOM headers, decoupling, GPIO 39 pull-up)
-├── USBProgramming.kicad_sch       (CP2102N USB-C bridge for programming + auto-reset)
-├── MotorDriver.kicad_sch          (BTS7960 connector, current-sense to GPIO 34)
+├── USBProgramming.kicad_sch       (CH340G USB-C bridge for programming + auto-reset)
+├── MotorDriver.kicad_sch          (L293L module connector + screw-terminal block)
 ├── ShiftRegLights.kicad_sch       (74HC595 + 6 LEDs)
 ├── ConnectorsSafety.kicad_sch     (JST-XH connectors, relay, MOSFET, E-stop, fuse)
 └── TFT_Camera.kicad_sch           (TFT 14-pin header, ESP32-CAM 4-pin connector,
@@ -392,28 +395,26 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 | **Footprint** | KiCad footprint library | `Resistor_SMD:R_0805_2012Metric` |
 | The link | A symbol's "Footprint" property points at a footprint by `library:footprint` notation | When you click a symbol → press `F`, you assign a footprint |
 
-### 4.2 Power components
+### 4.2 Power components (BOM-aligned, v2.2)
+
+The BOM specifies **LM1084 step-down buck modules** (line 4) — these are
+the K-Technics modules that come pre-assembled with their own input/output
+caps + inductor + Schottky on a small daughterboard. Treat each as a
+single 4-terminal device (Vin, GND, Vout, GND) on a 4-pin header.
 
 | Refdes | Symbol | Footprint | Quantity |
 |---|---|---|---|
 | J1 (DC barrel jack) | `Connector:Barrel_Jack` | `Connector_BarrelJack:BarrelJack_Horizontal` | 1 |
 | D1 (reverse-polarity Schottky) | `Diode:SS54` | `Diode_SMD:D_SMA` | 1 |
-| F1 (polyfuse 1.5 A) | `Device:Fuse` | `Fuse:Fuse_1812_4532Metric` | 1 |
-| D2 (TVS clamp) | `Diode_TVS:SMBJxxA` (pick `SMBJ16A`) | `Diode_SMD:D_SMB` | 1 |
-| U2 (LM2596 main 5 V) | `Regulator_Switching:LM2596S-5` | `Package_TO_SOT_SMD:TO-263-5_TabPin3` | 1 |
-| U2B (LM2596 CAM 5 V) | `Regulator_Switching:LM2596S-5` | `Package_TO_SOT_SMD:TO-263-5_TabPin3` | 1 |
-| L2 (33 µH inductor for U2) | `Device:L` | `Inductor_SMD:L_12x12mm_H8mm` | 1 |
-| L2B (33 µH inductor for U2B) | `Device:L` | `Inductor_SMD:L_12x12mm_H8mm` | 1 |
-| D3 (Schottky for U2) | `Diode:SS34` | `Diode_SMD:D_SMA` | 1 |
-| D3B (Schottky for U2B) | `Diode:SS34` | `Diode_SMD:D_SMA` | 1 |
-| C2 (470 µF input cap, U2) | `Device:CP` | `Capacitor_THT:CP_Radial_D8.0mm_P3.50mm` | 1 |
-| C2B (470 µF input cap, U2B) | `Device:CP` | `Capacitor_THT:CP_Radial_D8.0mm_P3.50mm` | 1 |
-| C3 (220 µF output cap, U2) | `Device:CP` | `Capacitor_THT:CP_Radial_D8.0mm_P3.50mm` | 1 |
-| C3B (220 µF output cap, U2B) | `Device:CP` | `Capacitor_THT:CP_Radial_D8.0mm_P3.50mm` | 1 |
+| F1 (polyfuse 2 A, RXEF200) | `Device:Polyfuse` | `Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal` | 1 |
+| D2 (TVS clamp, SMBJ15CA) | `Diode_TVS:SMBJ15CA` | `Diode_SMD:D_SMB` | 1 |
+| M_BUCK (LM1084 main 5 V module) | `Connector_Generic:Conn_01x04` | `Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical` | 1 (mates with the buck daughterboard) |
+| M_BUCK_CAM (LM1084 CAM 5 V module) | `Connector_Generic:Conn_01x04` | `Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical` | 1 |
+| C2 (470 µF input cap on PCB, before buck) | `Device:CP` | `Capacitor_THT:CP_Radial_D8.0mm_P3.50mm` | 2 (one each in front of M_BUCK and M_BUCK_CAM) |
 | U3 (AMS1117-3.3 V LDO) | `Regulator_Linear:AMS1117-3.3` | `Package_TO_SOT_SMD:SOT-223-3_TabPin2` | 1 |
 | C4 (10 µF U3 input) | `Device:C` | `Capacitor_SMD:C_1206_3216Metric` | 1 |
 | C5 (10 µF U3 output, REQUIRED for stability) | `Device:C` | `Capacitor_SMD:C_1206_3216Metric` | 1 |
-| Power flags (one per rail) | `power:PWR_FLAG` | (no footprint — schematic-only) | 5 (V12, V5, V5_CAM, V3V3, GND) |
+| Power flags (one per rail) | `power:PWR_FLAG` | (no footprint — schematic-only) | 5 (V12, +5V, V5_CAM, +3V3, GND) |
 
 ### 4.3 ESP32 module + decoupling
 
@@ -425,28 +426,39 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 | C1B (3.3 V bulk, ESP32) | `Device:CP` | `Capacitor_SMD:CP_Elec_5x5.4` | 1 (10 µF) |
 | R_pu_39 (10 kΩ pull-up on GPIO 39) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
 
-### 4.4 USB programming interface (CP2102N + USB-C + auto-reset)
+### 4.4 USB programming interface (CH340G + USB-C + auto-reset)
+
+The BOM specifies the **CH340G** (line 23 — "USB-UART CH340G module")
+rather than the CP2102N. The CH340G ships in an SOIC-16 package with
+the same DTR/RTS auto-reset wiring; differences are 12 MHz crystal
+required, and the on-chip 3.3 V regulator outputs less current
+(~25 mA) than the CP2102N's. Either drives the ESP32's RX/TX/EN/IO0
+fine.
 
 | Refdes | Symbol | Footprint | Quantity |
 |---|---|---|---|
 | J2 (USB-C connector) | `Connector:USB_C_Receptacle_USB2.0_16P` | `Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12` | 1 |
-| U4 (CP2102N USB-UART) | `Interface_USB:CP2102N-A02-GQFN24` | `Package_DFN_QFN:QFN-24-1EP_4x4mm_P0.5mm_EP2.4x2.4mm` | 1 |
-| C6 (CP2102N decoupling 0.1 µF) | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | 1 |
-| C7 (CP2102N decoupling 4.7 µF) | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | 1 |
-| C8 (USB VBUS bulk 10 µF) | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | 1 |
+| U4 (CH340G USB-UART) | `Interface_USB:CH340G` | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | 1 |
+| Y1 (12 MHz crystal for U4) | `Device:Crystal` | `Crystal:Crystal_HC49-4H_Vertical` | 1 |
+| C6, C7 (22 pF crystal load caps) | `Device:C` ×2 | `Capacitor_SMD:C_0603_1608Metric` | 2 |
+| C8 (CH340G decoupling 0.1 µF) | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | 1 |
+| C9 (USB VBUS bulk 10 µF) | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` | 1 |
 | Q3, Q4 (auto-reset BJT pair) | `Transistor_BJT:MMBT3904` ×2 | `Package_TO_SOT_SMD:SOT-23` | 2 |
 | R_q34 (12 kΩ for auto-reset) | `Device:R` ×4 | `Resistor_SMD:R_0805_2012Metric` | 4 |
-| D5, D6 (USB ESD protection) | `Power_Protection:USBLC6-2SC6` (or similar) | `Package_TO_SOT_SMD:SOT-23-6` | 1 (single chip protects both lines) |
+| D5 (USB ESD protection — optional) | `Power_Protection:USBLC6-2SC6` | `Package_TO_SOT_SMD:SOT-23-6` | 0 — not in BOM; populate only if you have one |
 
-### 4.5 Motor driver interface (BTS7960 connector)
+### 4.5 Motor driver interface (L293L module connector)
 
 | Refdes | Symbol | Footprint | Quantity |
 |---|---|---|---|
-| J3 (BTS7960 8-pin logic header) | `Connector_Generic:Conn_01x08` | `Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical` | 1 |
-| J3B (BTS7960 motor screw terminal) | `Connector_Generic:Conn_01x04` | `TerminalBlock_RND:TerminalBlock_RND_205-00154_1x04_P5.00mm_Horizontal` | 1 |
-| C9 (motor + bulk cap 100 µF) | `Device:CP` | `Capacitor_THT:CP_Radial_D6.3mm_P2.50mm` | 1 |
+| J3 (L293L 6-pin logic header) | `Connector_Generic:Conn_01x06` | `Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical` | 1 (carries ENA jumper, IN1, IN2, VCC, GND, ENB unused) |
+| J3B (L293L motor + Vmot screw terminal) | `Connector_Generic:Conn_01x04` | `TerminalBlock_RND:TerminalBlock_RND_205-00154_1x04_P5.00mm_Horizontal` | 1 (Vmot from relay NO contact, GND, OUT1, OUT2) |
+| C_motor_bulk (motor bulk cap 100 µF) | `Device:CP` | `Capacitor_THT:CP_Radial_D6.3mm_P2.50mm` | 1 (across Vmot/GND, close to J3B) |
 
-> The BTS7960 module itself is **off-board** — you only solder the connector that mates with its 8-pin logic strip. The screw terminal is for the motor wires (M+, M−).
+> The L293L module itself is **off-board** — you only solder the
+> connectors that mate with its 6-pin logic header and the screw
+> terminal block for motor wires (OUT1, OUT2). The module's onboard
+> ENA jumper must remain seated so PWM rides on IN1/IN2 directly.
 
 ### 4.6 Shift register + traffic LEDs
 
@@ -455,9 +467,9 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 | U5 (74HC595 shift register) | `74xx:74HC595` | `Package_DIP:DIP-16_W7.62mm` (with separate socket) | 1 |
 | (DIP-16 socket for U5) | (no schematic symbol — populate at order) | `Package_DIP:DIP-16_W7.62mm_Socket` | 1 |
 | C10 (74HC595 decoupling 0.1 µF) | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | 1 |
-| D_road_R, D_marine_R | `Device:LED` ×2 | `LED_THT:LED_D3.0mm` | 2 (red) |
-| D_road_Y, D_marine_Y | `Device:LED` ×2 | `LED_THT:LED_D3.0mm` | 2 (yellow) |
-| D_road_G, D_marine_G | `Device:LED` ×2 | `LED_THT:LED_D3.0mm` | 2 (green) |
+| D_road_R, D_marine_R | `Device:LED` ×2 | `LED_SMD:LED_0805_2012Metric` | 2 (red, 0805 SMD per BOM line 21) |
+| D_road_Y, D_marine_Y | `Device:LED` ×2 | `LED_SMD:LED_0805_2012Metric` | 2 (yellow, 0805 SMD) |
+| D_road_G, D_marine_G | `Device:LED` ×2 | `LED_SMD:LED_0805_2012Metric` | 2 (green, 0805 SMD) |
 | R_led1..6 (220 Ω current limit per LED) | `Device:R` ×6 | `Resistor_SMD:R_0805_2012Metric` | 6 |
 
 > The 6 LEDs may also be off-board on a panel; in that case use a 2×4 connector and run wires. For the demo, on-board is simpler.
@@ -474,13 +486,18 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 | J12 (HC-SR04 ×4, 3-pin per sensor: TRIG, ECHO, GND/VCC pair) | `Connector_Generic:Conn_01x04` ×4 | `Connector_JST:JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical` | 4 |
 | J13 (Buzzer 2-pin) | `Connector_Generic:Conn_01x02` | `Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical` | 1 |
 | K1 (relay SRD-05VDC) | `Relay:SRD-05VDC-SL-C` | `Relay_THT:Relay_SPDT_Omron_G5LE-1` | 1 |
-| Q1 (relay driver 2N7000) | `Transistor_FET:2N7000` | `Package_TO_SOT_THT:TO-92_Inline` | 1 |
-| D4 (relay flyback diode 1N4007) | `Diode:1N4007` | `Diode_THT:D_DO-41_SOD81_P10.16mm_Horizontal` | 1 |
-| R_q1 (220 Ω gate series for Q1) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
+| U6 (ULN2803 — backlight + buzzer + 6 spare channels) | `Driver_Display:ULN2803A` | `Package_DIP:DIP-18_W7.62mm` (with socket) | 1 (BOM line 10) |
+| U7 (ULN2803 — relay coil + 7 spare channels) | `Driver_Display:ULN2803A` | `Package_DIP:DIP-18_W7.62mm` (with socket) | 1 (BOM line 11) |
+| (DIP-18 sockets for U6, U7) | (no schematic symbol) | `Package_DIP:DIP-18_W7.62mm_Socket` | 2 |
+| C_uln1..2 (0.1 µF decoupling per ULN2803) | `Device:C` ×2 | `Capacitor_SMD:C_0603_1608Metric` | 2 |
+| D4 (relay flyback — anchored to U7 COM pin) | (built into ULN2803, pin 10 → +5V) | — | 0 (the ULN2803 has 8 internal flyback diodes — no external D4 needed) |
 | R_estop (10 kΩ pull-up) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
 | R_lim_pu (10 kΩ pull-up GPIO 39) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 (already counted in 4.3 — don't double-add) |
-| D_lim1..8 (1N4148 diodes for limit OR matrix) | `Diode:1N4148` ×8 | `Diode_SMD:D_SOD-123` | 8 |
+| D_lim1..4 (1N4148 diodes for limit OR matrix) | `Diode:1N4148` ×4 | `Diode_SMD:D_SOD-123` | 4 (BOM has 4 KW11-3Z switches, line 11 mech) |
 | R_us_div_a, R_us_div_b (1k + 2k voltage divider per HC-SR04 ECHO, ×4 sensors) | `Device:R` ×8 | `Resistor_SMD:R_0805_2012Metric` | 8 (4 × 1k + 4 × 2k) |
+| R_btn_pu (10 kΩ pull-up for operator-panel ladder, GPIO 34) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
+| C_btn_filt (100 nF noise filter on BTN_LADDER node) | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` | 1 |
+| J_PANEL (6-pin JST-XH to off-board operator panel) | `Connector_Generic:Conn_01x06` | `Connector_JST:JST_XH_B6B-XH-A_1x06_P2.50mm_Vertical` | 1 |
 
 ### 4.8 TFT + Camera connectors
 
@@ -488,9 +505,7 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 |---|---|---|---|
 | J6 (TFT 14-pin header) | `Connector_Generic:Conn_01x14` | `Connector_PinHeader_2.54mm:PinHeader_1x14_P2.54mm_Vertical` | 1 |
 | J7 (ESP32-CAM 4-pin JST-XH) | `Connector_Generic:Conn_01x04` | `Connector_JST:JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical` | 1 |
-| Q-BL (AO3400A backlight MOSFET) | `Transistor_FET:AO3400A` | `Package_TO_SOT_SMD:SOT-23` | 1 |
-| R_qbl_g (220 Ω gate series for Q-BL) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
-| R_qbl_pd (100 kΩ gate pull-down for Q-BL) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
+| (Backlight switch — uses U6 channel 1 of the loads ULN2803, no extra refdes) | — | — | 0 (already counted in §4.7) |
 | R_tft_cs (10 kΩ pull-up GPIO 15) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
 | R_tft_dc (10 kΩ pull-down GPIO 2) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
 | R_tft_miso (10 kΩ pull-up GPIO 12) | `Device:R` | `Resistor_SMD:R_0805_2012Metric` | 1 |
@@ -510,7 +525,7 @@ git commit -m "feat(pcb): create new KiCad project skeleton (v2.1)"
 | TP3 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D2.0mm` | V5_CAM |
 | TP4 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D2.0mm` | V3V3 |
 | TP5 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D2.0mm` | GND |
-| TP6 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D2.0mm` | VPROPI (motor current sense) |
+| TP6 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D2.0mm` | BTN_LADDER (operator panel ADC node) |
 
 ---
 
@@ -531,37 +546,48 @@ This is your most safety-critical sheet. Build it carefully.
 
 **Required symbols (use the Step 4.2 table for footprints):**
 - J1 (barrel jack) → drives `V12_RAW` net.
-- D1 Schottky in series → output `V12_PROT`.
-- F1 polyfuse in series → output `V12_FUSED`.
-- D2 TVS in shunt to GND on `V12_FUSED`.
+- D1 SS54 Schottky in series → output `V12_PROT`.
+- F1 polyfuse 2 A (RXEF200) in series → output `V12_FUSED`.
+- D2 SMBJ15CA TVS in shunt to GND on `V12_FUSED`.
 - Net `V12` is a global label tied to `V12_FUSED`.
-- U2 + L2 + D3 + C2 + C3 → 5 V main switching regulator. Output is global label `+5V`.
-- U2B + L2B + D3B + C2B + C3B → 5 V CAM switching regulator. Output is global label `V5_CAM`. Both bucks share Vin from `V12`.
-- U3 + C4 + C5 → 3.3 V LDO from +5V. Output is global label `+3V3`.
+- M_BUCK 4-pin header (mates with the **LM1084 main 5 V module**, BOM
+  line 4): pin1 V12, pin2 GND, pin3 +5V, pin4 GND. Output global label
+  `+5V`. Add C2 (470 µF radial) across V12/GND just before the header.
+- M_BUCK_CAM 4-pin header (mates with the second **LM1084 module** for
+  the camera): same pinout, output global label `V5_CAM`. Add a second
+  470 µF input cap before this header.
+- U3 (AMS1117-3.3) + C4 (10 µF input) + C5 (10 µF output, REQUIRED for
+  stability) → 3.3 V LDO from +5V. Output is global label `+3V3`.
 - 5 × `PWR_FLAG` symbols on V12, +5V, V5_CAM, +3V3, GND so ERC is happy.
 
 **Wiring sketch (text representation):**
 ```
-   J1.+ ── D1 ── F1 ──┬── D2 cathode ── GND (D2 anode)
-                       │
-                       ├── PWR_FLAG (V12)
-                       │
-                       ├── U2.Vin (LM2596 main)
-                       │     │
-                       │     └── L2 → output → C3 → +5V (PWR_FLAG)
-                       │                       D3 cathode (anode to GND)
-                       │
-                       └── U2B.Vin (LM2596 CAM)
-                             │
-                             └── L2B → output → C3B → V5_CAM (PWR_FLAG)
-                                                D3B cathode
+   J1.+ ── D1 (SS54) ── F1 (PTC 2 A) ──┬── D2 (SMBJ15CA) cathode ── GND
+                                        │
+                                        ├── PWR_FLAG (V12)
+                                        │
+                                        ├── C2 ──┬── M_BUCK pin1 (Vin)
+                                        │        │   M_BUCK pin2 (GND) ── GND
+                                        │       │   M_BUCK pin3 (Vout) ── +5V (PWR_FLAG)
+                                        │       │   M_BUCK pin4 (GND) ── GND
+                                        │       │  [external module: LM1084 5 V]
+                                        │
+                                        └── C2B ──┬── M_BUCK_CAM pin1 (Vin)
+                                                  │   M_BUCK_CAM pin2 (GND) ── GND
+                                                  │   M_BUCK_CAM pin3 (Vout) ── V5_CAM (PWR_FLAG)
+                                                  │   M_BUCK_CAM pin4 (GND) ── GND
+                                                  │  [external module: LM1084 5 V]
 
-   +5V ── U3.Vin ── C4 ── GND (input cap)
-              U3.Vout ── C5 ── GND (output cap, REQUIRED)
-              U3.Vout → +3V3 (PWR_FLAG)
+   +5V ── U3.Vin ── C4 (10 µF) ── GND
+          U3.Vout ── C5 (10 µF) ── GND          (output cap REQUIRED for AMS1117 stability)
+          U3.Vout → +3V3 (PWR_FLAG)
 ```
 
-> Take your time. Match the U2 datasheet's typical-application circuit pin-for-pin. The Vin/GND/Output pin assignments differ between LM2596 variants — confirm against the symbol you placed.
+> The LM1084 module is a daughterboard — the PCB hosts only the 4-pin
+> header that mates with it. Test the bare module on the bench (12 V in,
+> verify 5 V out at no load, then under 1 A load) before installing.
+> Some K-Technics modules ship with a trim pot — set output to 5.0 ± 0.05 V
+> with no load before populating the PCB.
 
 **Hierarchical labels exiting this sheet to root:** none (all power crossings use global labels).
 
@@ -572,7 +598,7 @@ This is your most safety-critical sheet. Build it carefully.
 - Place hierarchical labels for **every** GPIO that exits this sheet. Label name = the canonical name from `firmware/src/pin_config.h`. Examples:
   - GPIO 25 → `MOTOR_IN1`
   - GPIO 26 → `MOTOR_IN2`
-  - GPIO 34 → `MOTOR_VPROPI`
+  - GPIO 34 → `BTN_LADDER` (5-button operator-panel ADC)
   - GPIO 35 → `DECK_POSITION`
   - GPIO 39 → `LIMIT_ANYHIT`
   - GPIO 32 → `MOTOR_RELAY`
@@ -602,32 +628,36 @@ This is your most safety-critical sheet. Build it carefully.
 
 ### 5.3 USBProgramming.kicad_sch
 - J2 USB-C connector (16 pins; USB 2.0 only uses VBUS, GND, D+, D−, CC1, CC2).
-- U4 CP2102N (QFN-24).
-- D5/D6 ESD protection on D+/D− lines (`USBLC6-2SC6`).
-- C6 (0.1 µF) + C7 (4.7 µF) decoupling on CP2102N's 3.3 V regulator output.
-- C8 (10 µF) bulk on USB VBUS.
+- U4 CH340G (SOIC-16, BOM line 23).
+- Y1 12 MHz crystal between CH340G XI/XO pins, with C6 + C7 (22 pF each) load caps to GND.
+- C8 (0.1 µF) decoupling on CH340G VCC.
+- C9 (10 µF) bulk on USB VBUS.
 - Auto-reset circuit: Q3 (MMBT3904) and Q4 (MMBT3904) plus 4 × 12 kΩ resistors as per the DTR/RTS → ESP32 EN/IO0 standard pattern.
 - USB CC1 and CC2 pins each through 5.1 kΩ to GND (USB-C source-detect).
-- Hierarchical labels exiting: `USB_TX → BUZZER`, `USB_RX → US4_ECHO`, `USB_DTR → ESP_EN_RST`, `USB_RTS → ESP_BOOT`.
+- Hierarchical labels exiting: `USB_TX → BUZZER` (note: also reaches GPIO 1 / U_TXD), `USB_RX → US4_ECHO` (GPIO 3), `USB_DTR → ESP_EN_RST`, `USB_RTS → ESP_BOOT`.
 
-> The USB-C symbol KiCad uses requires CC1/CC2 termination. Without the 5.1 kΩ resistors, your USB-C cable won't enumerate.
+> The USB-C symbol KiCad uses requires CC1/CC2 termination. Without the
+> 5.1 kΩ resistors, your USB-C cable won't enumerate.
+>
+> The CH340G has its own internal 3.3 V regulator (V3 pin) — tie it to a
+> 100 nF ceramic to GND but **do not** wire it to the +3V3 plane on the
+> PCB; let the AMS1117 power the rest of the board. Otherwise back-feed
+> through the CH340G's regulator can confuse brownout detection.
 
 ### 5.4 MotorDriver.kicad_sch
-- J3 (8-pin male header, mates with the BTS7960 module's 8-pin logic strip):
-  - Pin 1 (RPWM) → hierarchical label `MOTOR_IN1` (from ESP32 GPIO 25)
-  - Pin 2 (LPWM) → `MOTOR_IN2` (GPIO 26)
-  - Pin 3 (R_EN) → +5V
-  - Pin 4 (L_EN) → +5V
-  - Pin 5 (R_IS) → `MOTOR_VPROPI` (GPIO 34)
-  - Pin 6 (L_IS) → tied to R_IS or marked NC
-  - Pin 7 (VCC) → +5V
-  - Pin 8 (GND) → GND
+- J3 (6-pin female header, mates with the L293L module's logic strip):
+  - Pin 1 (ENA jumper to VCC) → +5V (ENA must be HIGH for PWM-on-IN1/IN2 mode)
+  - Pin 2 (IN1) → hierarchical label `MOTOR_IN1` (from ESP32 GPIO 25)
+  - Pin 3 (IN2) → `MOTOR_IN2` (GPIO 26)
+  - Pin 4 (ENB) → NC (channel 2 unused — single motor)
+  - Pin 5 (VCC) → +5V
+  - Pin 6 (GND) → GND
 - J3B (4-pin screw terminal, motor power):
-  - Pin 1 (B+) → net `MOTOR_VPP` (this comes from the relay NO contact, see 5.6)
-  - Pin 2 (B−) → GND
-  - Pin 3 (M+) → screw terminal to motor wire
-  - Pin 4 (M−) → screw terminal to motor wire
-- C9 (100 µF) across MOTOR_VPP / GND for inrush.
+  - Pin 1 (Vmot) → net `MOTOR_VPP` (this comes from the relay NO contact, see 5.6)
+  - Pin 2 (GND) → GND
+  - Pin 3 (OUT1) → screw terminal to motor wire (red)
+  - Pin 4 (OUT2) → screw terminal to motor wire (black)
+- C_motor_bulk (100 µF radial) across MOTOR_VPP / GND for inrush.
 
 ### 5.5 ShiftRegLights.kicad_sch
 - U5 74HC595 (DIP-16):
@@ -655,17 +685,22 @@ This is your most safety-critical sheet. Build it carefully.
   - Pin 2 → GND.
 - The mushroom button NC contact closes pin 1 to GND when not pressed. When pressed (NC opens), pin 1 floats up via R_estop to +3V3 (= "pressed" in firmware).
 
-#### Relay coil drive
-- Q1 (2N7000) — N-MOSFET, low-side switch on relay coil.
-  - Gate (G) → R_q1 (220 Ω series) → `MOTOR_RELAY` hier label (GPIO 32).
-  - Drain (D) → relay coil pin 1.
-  - Source (S) → GND.
-  - Add an extra 100 kΩ pull-down from gate to GND so the relay stays off if the GPIO floats during boot.
+#### Relay coil drive (via U7 ULN2803 channel 1)
+- U7 ULN2803 (relay-coil ULN2803 from §4.7):
+  - Pin 1 (IN1) → `MOTOR_RELAY` hier label (GPIO 32).
+  - Pin 18 (OUT1, Darlington collector) → relay K1 coil pin 1.
+  - Pin 9 (COM) → +5V (anchors the built-in flyback diode).
+  - Pin 10 (GND) → GND.
+  - Add the standard 0.1 µF decoupling (`C_uln2`) between pins 9 and 10.
+  - The other 7 channels are broken out to a 7-pin header for future
+    expansion (extra LEDs, secondary relay, status indicators).
 - Relay K1 (SRD-05VDC-SL-C):
-  - Coil pin 1 → Q1 drain.
+  - Coil pin 1 → U7 OUT1 (Darlington collector).
   - Coil pin 2 → +5V.
-  - D4 (1N4007) flyback diode: cathode → +5V, anode → coil pin 1. **Verify orientation.**
-  - NO contact in series between V12 and `MOTOR_VPP` (which feeds J3B B+ on the MotorDriver sheet).
+  - **No discrete flyback diode required** — the ULN2803's internal
+    flyback diode (anchored at pin 9 to +5V) handles coil kickback.
+  - NO contact in series between V12 and `MOTOR_VPP` (which feeds J3B
+    Vmot on the MotorDriver sheet).
   - NC contact unused.
   - Common pole tied to V12.
 
@@ -679,18 +714,38 @@ This is your most safety-critical sheet. Build it carefully.
 
 #### Limit switches (diode-OR matrix)
 - J10 (left tower 4-pin JST-XH):
-  - Pins 1, 2 → 2 wires of left-top KW12-3 (one to +3V3 via the diode-OR matrix, one to GND).
-  - Pins 3, 4 → 2 wires of left-bottom KW12-3.
+  - Pins 1, 2 → 2 wires of left-top KW11-3Z (one to +3V3 via the diode-OR matrix, one to GND).
+  - Pins 3, 4 → 2 wires of left-bottom KW11-3Z.
 - J11 same for right tower.
 - Diode-OR network using D_lim1..D_lim8 (1N4148):
   - Each switch's "signal" wire goes to anode of a 1N4148; all cathodes tied together.
   - The combined cathode node → `LIMIT_ANYHIT` (GPIO 39).
   - GPIO 39 needs an external pull-up to +3V3 — **already added in ESP32Module.kicad_sch (R_pu_39)**.
 
-#### Buzzer
+#### Buzzer (via U6 ULN2803 channel 2)
+- U6 ULN2803 (loads ULN2803 from §4.7):
+  - Pin 2 (IN2) → `BUZZER` hier label (GPIO 1, only driven after boot)
+  - Pin 17 (OUT2) → J13 pin 1
+  - Pin 9 (COM) → +5V (unused — buzzer is non-inductive but COM is harmless)
+  - Pin 10 (GND) → GND
 - J13 (2-pin JST-XH):
-  - Pin 1 → `BUZZER` (GPIO 1, but only after boot — see pin_config.h note)
-  - Pin 2 → GND
+  - Pin 1 → U6 OUT2
+  - Pin 2 → +5V (buzzer's positive lead)
+- LEDC tone PWM on GPIO 1 → ULN2803 input → channel sinks the piezo to GND.
+
+#### Operator panel (5-button resistor ladder)
+- J_PANEL (6-pin JST-XH for off-board panel — see member guide M4 §11):
+  - Pin 1 → +3V3 (panel pull-up rail)
+  - Pin 2 → `BTN_LADDER` hier label (GPIO 34, ADC1_CH6)
+  - Pin 3 → GND
+  - Pin 4 → NC (spare)
+  - Pin 5 → NC (spare)
+  - Pin 6 → ESP_RESET (optional 6th-button hard-reset to ESP32 EN)
+- R_btn_pu (10 kΩ) from BTN_LADDER node to +3V3.
+- C_btn_filt (100 nF) from BTN_LADDER node to GND, placed within 5 mm
+  of the ESP32 GPIO 34 pad to suppress switch-bounce ringing.
+- The five 1 kΩ ladder resistors live on the off-board panel — see
+  `docs/05_electronics_design.md` §5.5a for the topology.
 
 ### 5.7 TFT_Camera.kicad_sch
 
@@ -716,12 +771,16 @@ Use `Connector_Generic:Conn_01x14`, footprint `Connector_PinHeader_2.54mm:PinHea
 
 Add C_tft_dec (0.1 µF) within 5 mm of pin 1 and C_tft_bulk (10 µF) within 15 mm.
 
-#### Backlight driver (Q-BL)
-- Q-BL (AO3400A SOT-23 N-MOSFET):
-  - Gate (G) → R_qbl_g (220 Ω) → `TFT_BL` hier label (GPIO 27).
-  - Drain (D) → TFT pin 8 (LED return).
-  - Source (S) → GND.
-  - R_qbl_pd (100 kΩ) gate pull-down to GND.
+#### Backlight driver (via U6 ULN2803 channel 1)
+- U6 ULN2803 (loads ULN2803 from §4.7):
+  - Pin 1 (IN1) → `TFT_BL` hier label (GPIO 27, LEDC ch 2 PWM @ 5 kHz).
+  - Pin 18 (OUT1) → TFT pin 8 (LED return).
+  - Pin 9 (COM) → +5V (unused for resistive load — TFT BL chain is
+    non-inductive — but harmless).
+  - Pin 10 (GND) → GND.
+  - The ULN2803's input pulldown (~10 kΩ on each input) keeps the
+    backlight off if GPIO 27 floats during boot, replacing the
+    R_qbl_pd discrete pull-down used in v2.0.
 
 #### J7 — ESP32-CAM 4-pin JST-XH
 Use `Connector_Generic:Conn_01x04`, footprint `Connector_JST:JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical`.
@@ -729,7 +788,7 @@ Use `Connector_Generic:Conn_01x04`, footprint `Connector_JST:JST_XH_B4B-XH-A_1x0
 | Pin | Net | Notes |
 |---|---|---|
 | 1 | GND | Common ground with main board |
-| 2 | V5_CAM | From the dedicated LM2596 (U2B) |
+| 2 | V5_CAM | From the dedicated LM1084 module (M_BUCK_CAM) |
 | 3 | (unused, mark NC) | Reserved for future bidirectional |
 | 4 | VISION_RX | Goes to ESP32 GPIO 16 (CAM TX → ESP32 UART2 RX) |
 
@@ -811,15 +870,16 @@ Suggested placement (all coordinates in mm, origin at bottom-left):
 | Component | Position | Why |
 |---|---|---|
 | ESP32-WROOM module headers | (50, 40) — centre of board | Most pins land here; central placement minimises trace lengths |
-| BTS7960 logic header (J3) | (90, 60) — right edge | Short path to motor terminal |
-| BTS7960 motor terminal (J3B) | (90, 30) — right edge | Same vicinity, motor wires exit |
-| K1 relay | (75, 50) — between J3 and ESP32 | Short high-current path BTS7960 ← K1 |
-| LM2596 main (U2) + L2 + caps | (15, 65) — top-left | Power input area |
-| LM2596 CAM (U2B) + L2B + caps | (15, 50) — left, below U2 | Same input net |
+| L293L module logic header (J3) | (90, 60) — right edge | Short path to motor terminal |
+| L293L module motor terminal (J3B) | (90, 30) — right edge | Same vicinity, motor wires exit |
+| K1 relay | (75, 50) — between J3 and ESP32 | Short high-current path L293L ← K1 |
+| LM1084 main module (M_BUCK) header | (15, 65) — top-left | Power input area; the module's daughterboard sits above the PCB |
+| LM1084 CAM module (M_BUCK_CAM) header | (15, 50) — left, below M_BUCK | Same input net |
+| ULN2803 ×2 (U6, U7) sockets | (40, 30) and (40, 50) — central | Short paths to backlight, buzzer, relay coil |
 | AMS1117 (U3) + caps | (35, 70) — near ESP32's 3V3 pin | Short trace to ESP32 |
 | DC barrel jack (J1) | (5, 75) — top-left edge | Cable comes in from outside |
 | USB-C (J2) | (50, 78) — top-centre edge | Programming cable position |
-| CP2102N (U4) | (50, 70) — directly below USB-C | Short USB lines |
+| CH340G (U4) | (50, 70) — directly below USB-C | Short USB lines |
 | 74HC595 (U5) socket | (25, 30) — bottom-left | LEDs nearby on bottom edge |
 | 6 LEDs in a row | y=10, x = 10, 20, 30, 60, 70, 80 | Visible on the board front |
 | TFT 14-pin (J6) | (5, 40) — left edge | Cable to off-board TFT |
@@ -977,24 +1037,21 @@ Notes: First production batch from new KiCad project.
 
 Use this checklist while the PCB is in transit. Each item maps to a footprint from Step 4. **Cross-check against `bom/VLB_Group7_BOM.xlsx`** — every line in this checklist must have a row in the BOM.
 
-### 10.1 Active SMD components (Pixel Electric, Luthuli Avenue, or Aliexpress with 14-day lead)
-| Part | Qty | KES each | Source |
-|---|---|---|---|
-| LM2596S-5.0 (TO-263-5) | 2 | 220 | Pixel |
-| AMS1117-3.3 (SOT-223) | 1 | 30 | Pixel |
-| AO3400A (SOT-23) | 1 | 20 | Aliexpress |
-| 2N7000 (TO-92) | 1 | 15 | Pixel |
-| MMBT3904 (SOT-23) | 2 | 15 | Pixel |
-| SS54 Schottky (SMA) | 1 | 25 | Pixel |
-| SS34 Schottky (SMA) | 2 | 25 | Pixel |
-| SMBJ16A TVS (SMB) | 1 | 35 | Pixel |
-| 1N4007 diode (DO-41) | 1 | 5 | Pixel |
-| 1N4148 diode (SOD-123) | 8 | 5 | Pixel |
-| 74HC595 (DIP-16) | 1 | 80 | Pixel |
-| DIP-16 socket | 1 | 30 | Pixel |
-| CP2102N (QFN-24) | 1 | 200 | Aliexpress |
-| USBLC6-2SC6 (SOT-23-6) | 1 | 50 | Pixel |
-| 33 µH 3 A inductor (12×12 mm) | 2 | 100 | Pixel |
+### 10.1 Active SMD components (BOM-aligned — Pixel Electric, K-Technics, Luthuli Avenue)
+| Part | Qty | KES each | Source | BOM line |
+|---|---|---|---|---|
+| LM1084 5 V buck module (daughterboard, 5 A) | 2 | 150 | Pixel | 4 (×1 for main, ×1 for V5_CAM) |
+| AMS1117-3.3 (SOT-223) | 1 | 15 | Pixel | 3 (BOM stocks 3, 1 used + 2 spare) |
+| MMBT3904 (SOT-23) | 2 | 15 | Pixel | passives kit |
+| SS54 Schottky (SMA) | 2 | 5 | Pixel | 7 |
+| SMBJ15CA TVS (SMB) | 1 | 35 | Pixel | 9 |
+| 1N4148 diode (SOD-123) | 4 | 5 | Pixel | passives |
+| 74HC595 (DIP-16) | 1 | 30 | Pixel | 13 (BOM has 2 — 1 + 1 spare) |
+| DIP-16 socket | 1 | 30 | Pixel | — |
+| ULN2803A (DIP-18) | 2 | 50 | Pixel | 10 + 11 |
+| DIP-18 sockets | 2 | 30 | Pixel | — |
+| CH340G (SOIC-16) | 1 | 350 | Pixel | 23 |
+| 12 MHz crystal (HC-49S) | 1 | 30 | Pixel | passives |
 
 ### 10.2 Passives (one-time investment in 0805/0603 assortment kits)
 - 0805 SMD resistor assortment kit (200 each of common values 1Ω–10MΩ) — KES 800 once.
@@ -1011,13 +1068,14 @@ Specific values you need (cross-reference Step 4):
 - 12 kΩ 0805: 4 (auto-reset)
 - 100 kΩ 0805: 2 (gate pull-downs Q1 and Q-BL)
 - 0.1 µF X7R 0603: 12 (decoupling everywhere)
-- 4.7 µF X7R 0805: 1 (CP2102N)
+- 22 pF C0G 0603: 2 (CH340G crystal load caps)
 - 10 µF X5R 1206: 4 (AMS1117 in/out, TFT bulk, ESP32 bulk)
 
 ### 10.3 Electrolytics + bulk
 - 100 µF / 25 V (radial, 6.3 mm): 1 (motor inrush)
-- 220 µF / 16 V (radial, 8 mm): 2 (LM2596 outputs)
-- 470 µF / 25 V (radial, 8 mm): 4 (LM2596 inputs ×2 + servo bulks ×2)
+- 470 µF / 25 V (radial, 8 mm): 4 (LM1084 module inputs ×2 + servo bulks ×2)
+- (LM1084 modules already include their own input/output caps — no
+  additional output bulk needed on the main PCB)
 - 470 µF / 10 V (SMD, 8×10 mm): 1 (V5_CAM bulk at J7)
 
 ### 10.4 Through-hole connectors and switches
@@ -1031,7 +1089,7 @@ Specific values you need (cross-reference Step 4):
 | 1×19 female header for ESP32 module | 2 | 30 |
 | 4-pin tact reset button | 1 | 10 |
 | JST-XH connectors with crimp housings (assorted 2/3/4-pin) | 12 | total ~400 |
-| 8-pin male header for BTS7960 | 1 | 20 |
+| 6-pin female header for L293L module logic strip | 1 | 20 |
 | 4-pin screw terminal block 5 mm pitch | 1 | 50 |
 
 ### 10.5 LEDs and indicators
@@ -1043,16 +1101,16 @@ Specific values you need (cross-reference Step 4):
 
 ### 10.6 Off-board components (NOT on the PCB; documented here for completeness)
 - ESP32-WROOM-32E DevKit module: 1, KES 950
-- BTS7960 module (board-level driver): 1, KES 750
+- L293L H-bridge module (board-level driver): 1, KES 500 (BOM line 2)
 - ESP32-CAM AI-Thinker: 1, KES 950
 - ILI9341 2.8" TFT + XPT2046 module: 1, KES 1,300
 - HC-SR04 modules: 4, KES 100 each = 400
 - SG90 servos: 2, KES 200 each = 400
-- KW12-3 microswitches: 8, KES 50 each = 400
+- KW11-3Z microswitches: 4, KES 80 each = 320 (BOM line 11)
 - 16 mm mushroom NC button (XB2-BS542): 1, KES 350
 - JGA25-370 12 V geared motor: 1, KES 950 (but in M2's BOM)
 
-**Total for M5's BOM portion: ~KES 6,400.** Cross-check against `bom/VLB_Group7_BOM.xlsx`. The full BOM (all 5 members) sums to KES 24,825.
+**Total for M5's BOM portion: ~KES 4,998** (Electronics — PCB components, TFT, CAM section per the BOM PDF). Cross-check against `bom/VLB_Group7_BOM.xlsx`. The full BOM (all 5 members + PCB fab + consumables) sums to **KES 25,678**.
 
 ---
 
@@ -1073,23 +1131,23 @@ Specific values you need (cross-reference Step 4):
 | # | Group | Components | Technique |
 |---|---|---|---|
 | 1 | 0603 / 0805 SMD R + C | All passives | Tin one pad, place R/C with tweezers, melt the tinned pad. Solder the other side. |
-| 2 | SOT-23 transistors | AO3400A, MMBT3904 ×2, 2N7000-SMD if used | Tin one pad, place, solder other 2 pads. |
-| 3 | SOT-223 / SOT-23-6 | AMS1117, USBLC6-2SC6 | Tab/centre pad first (heat sink), then signal pins. |
-| 4 | TO-263-5 | LM2596 ×2 | Tab first with plenty of flux — big tab needs heat. Then 5 signal pins. |
-| 5 | QFN | CP2102N | Most challenging. Apply liberal flux, place chip, drag-solder one row at a time. Wick away bridges. Inspect with loupe. |
-| 6 | SMA / SMB diodes | SS54, SS34 ×2, SMBJ16A | Mind the cathode (band) orientation — silkscreen marker shows direction. |
+| 2 | SOT-23 transistors | MMBT3904 ×2 | Tin one pad, place, solder other 2 pads. |
+| 3 | SOT-223 | AMS1117 | Tab pad first (heat sink), then signal pins. |
+| 4 | SOIC-16 | CH340G | Drag-solder one row at a time with liberal flux; wick away bridges. Verify pin 1 orientation against silkscreen dot. |
+| 5 | (skipped — no QFN parts in v2.2) | — | — |
+| 6 | SMA / SMB diodes | SS54 ×2, SMBJ15CA | Mind the cathode (band) orientation — silkscreen marker shows direction. |
 | 7 | SOD-123 | 1N4148 ×8 | Same — cathode band matters. |
-| 8 | DIP-16 socket | For 74HC595 | Through-hole. Solder corner pin first, check seating, solder remaining. **Don't insert IC yet.** |
-| 9 | THT diode (1N4007) | D4 (relay flyback) | THT — cathode band toward +5V net |
-| 10 | THT inductors | L2, L2B (33 µH 12×12 mm) | Drag-solder the four under-pads with extra flux |
-| 11 | THT female headers | 1×19 ×2 (ESP32), 1×14 (TFT) | Solder corner pin first, check spacing fits the DevKit by dry-fitting, solder remaining. |
-| 12 | THT polarised connectors | DC jack, USB-C, all JST-XH | Verify orientation against silkscreen pin 1 marker |
+| 8 | DIP sockets | DIP-16 (74HC595) + DIP-18 ×2 (ULN2803 ×2) | Solder corner pin first, check seating, solder remaining. **Don't insert ICs yet.** |
+| 9 | (skipped — no discrete relay flyback diode in v2.2; ULN2803 has internal diodes) | — | — |
+| 10 | THT crystal | Y1 (12 MHz, HC-49S) for CH340G | Bend leads, drop in, solder both pads |
+| 11 | THT female headers | 1×19 ×2 (ESP32), 1×14 (TFT), 1×4 ×2 (LM1084 modules), 1×6 (L293L logic) | Solder corner pin first, check spacing fits the daughterboards by dry-fitting, solder remaining. |
+| 12 | THT polarised connectors | DC jack, USB-C, all JST-XH (including J_PANEL 6-pin) | Verify orientation against silkscreen pin 1 marker |
 | 13 | THT relay | K1 SRD-05VDC | 5 pins, all THT |
 | 14 | THT tact button | Reset button | 2 pairs of pins |
-| 15 | THT LEDs | 6 traffic + 1 CAM-PWR | Long lead = anode = goes to +5V via resistor; short lead = cathode = GND |
-| 16 | THT screw terminal | J3B (BTS7960 motor) | 4-pin block |
+| 15 | (LEDs are 0805 SMD per BOM line 21 — already covered in step 1 with the rest of the SMD passives) | — | — |
+| 16 | THT screw terminal | J3B (L293L motor 4-pin block) | 4-pin block |
 | 17 | Test points | TP1..TP6 | Just pads — no components, but verify they're not bridged |
-| 18 | DevKit + ICs into sockets | ESP32-WROOM, 74HC595 | **Push in, do not solder.** ESP32 might need swapping. |
+| 18 | DevKit + ICs + buck modules | ESP32-WROOM, 74HC595, 2× ULN2803, 2× LM1084 daughterboards | **Push in, do not solder.** Each is field-replaceable. |
 
 ### 11.3 Inter-step verification
 After every group, with multimeter in continuity beep mode:
@@ -1130,12 +1188,11 @@ Probe each test point:
 - TP4 (V3V3) → should read **3.30 ± 0.05 V**.
 
 If a rail reads 0 V:
-- LM2596 — verify Vin/GND/Vout pins under loupe; broken solder = open circuit.
+- LM1084 module — verify the 4-pin header is fully seated; reseat if loose. Test the module on the bench (12 V in → 5 V out) before re-installing.
 - AMS1117 — verify Vin pin (3) connects to V5, GND pin (1) to GND, Vout pin (2) to V3V3.
-- Check inductors L2/L2B for broken solder.
 
 If a rail reads 4.5 V instead of 5 V:
-- Adjustable LM2596 — tweak trim pot until 5.0 V (this guide assumes fixed-output LM2596S-5.0; if you used adjustable, you'll have a tiny pot to turn).
+- Adjustable LM1084 module — tweak the trim pot on the daughterboard until 5.0 V (most K-Technics LM1084 modules ship with a fixed 5 V preset, but some have a trim pot — measure no-load before installing).
 
 If a rail oscillates (multimeter jitters):
 - Missing 10 µF on AMS1117 output (C5). Add one.
@@ -1153,7 +1210,7 @@ The 3 mm green LED `D_cam_pwr` should be **lit** if V5_CAM is up. If it's off bu
 ### 12.6 Verify ESP32 enumerates over USB
 1. Plug USB-C into the board's USB-C port.
 2. Windows: Device Manager → Ports — should show "Silicon Labs CP210x (COM<n>)".
-3. If nothing shows, the CP2102N has a soldering issue. Reflow with hot air or fresh iron tip. Re-test.
+3. If nothing shows, the CH340G has a soldering issue. Reflow with hot air or fresh iron tip. Verify the 12 MHz crystal pads for cold joints. Re-test.
 
 ### 12.7 Flash firmware
 1. PlatformIO → vlb_main → Build → Upload. (Hold BOOT button if needed.)
@@ -1182,12 +1239,12 @@ The 3 mm green LED `D_cam_pwr` should be **lit** if V5_CAM is up. If it's off bu
 The v2.1 firmware does NOT monitor the rail voltages — that hardware path was removed (see `docs/known_limitations.md` L1). Brownout is now detected by:
 
 1. **ESP32 internal brownout detector** — built-in, trips at ~2.43 V on 3.3 V rail and resets the chip. Serial shows `Brownout detector triggered`.
-2. **BTS7960 built-in undervoltage lockout** — trips at ~5.5 V on driver Vcc; the H-bridge stops switching, FSM sees this as a stall fault (`FAULT_STALL`) within `MOTOR_STALL_TIMEOUT_MS` (2 s).
-3. **LM2596 thermal/current limit** — protects the 5 V rail from sustained overload independently of firmware.
+2. **L293L thermal-shutdown** — the H-bridge silicon's internal over-temperature cutout trips at ~150 °C, opens both half-bridges, and self-recovers when temperature drops. Firmware sees this as a stall fault (`FAULT_STALL`) within `MOTOR_STALL_TIMEOUT_MS` (2 s).
+3. **LM1084 module thermal/current limit** — protects the 5 V rail from sustained overload independently of firmware.
 
 Bench-test the layered protection:
 1. Drop the bench supply slowly from 12 V toward 0.
-2. At ~10.5 V the BTS7960 should stop driving the motor; firmware logs `[fault] raised: stall`.
+2. Below ~6 V the L293L's logic supply drops out of spec; firmware sees this as a stall and logs `[fault] raised: stall`.
 3. Continue dropping. At some point the ESP32 itself resets — observe the reboot banner.
 
 ---
@@ -1229,7 +1286,7 @@ Run all 5 tests before signing off. Record each in `docs/integration_log.md`.
 | 1 | E-stop hard cut | Bridge mid-cycle (raising). Press mushroom button. | Motor stops within 50 ms (verify with high-speed video at 60+ fps or scope on motor terminals). FSM enters STATE_ESTOP. |
 | 2 | E-stop recovery | Twist mushroom to release. Tap CLEAR on HMI. | FSM returns to STATE_IDLE. Bridge fully operable again. |
 | 3 | Watchdog | Add `delay(5000)` temporarily in `task_motor`'s loop. Build + flash. | `[wdt] HUNG: motor=...` log appears. FSM forced to STATE_FAULT. Remove the delay and reflash. |
-| 4 | Overcurrent | Hold the deck firmly mid-travel during a raise. | Motor current rises (visible on telemetry). At ~2200 mA, `FAULT_OVERCURRENT` raised. FSM enters STATE_FAULT. |
+| 4 | Overcurrent (v3 only) | Hold the deck firmly mid-travel during a raise. | Skipped in v2.2 — the L293L module has no current-sense pin; `FAULT_OVERCURRENT` is reserved-but-unset. The L293L's internal thermal-shutdown handles real abuse. Re-enable this test on the v3 board with an INA169 shunt amplifier. |
 | 5 | Stall | Block the deck so the motor cannot move. Issue raise command. | After 2 s, `FAULT_STALL` raised. FSM enters STATE_FAULT. |
 
 ---
@@ -1254,9 +1311,9 @@ Run all 5 tests before signing off. Record each in `docs/integration_log.md`.
 | Symptom | Most likely cause | First fix to try |
 |---|---|---|
 | Bench supply hits current limit at 12 V power-on | Short on V12 or 5 V rail | Power off. Visually inspect under loupe. Multimeter probe along V+ traces, listen for beep with GND probe held. |
-| 5 V rail reads 4.6 V | Adjustable LM2596 trim pot mis-set | Tweak trim pot until 5.0 V output. (If you used fixed LM2596S-5.0, this shouldn't happen.) |
+| 5 V rail reads 4.6 V | Adjustable LM1084 module trim pot mis-set | Tweak trim pot until 5.0 V output. Some K-Technics LM1084 modules ship with a fixed-output preset and have no pot — in that case suspect the 4-pin header connection. |
 | 3.3 V rail oscillates (multimeter jitters) | Missing 10 µF on AMS1117 output | Add 10 µF X5R 1206 cap at output pin |
-| ESP32 doesn't enumerate over USB | DevKit not seated, or CP2102N solder issue | Re-seat DevKit. Reflow CP2102N pins with extra flux + iron under loupe. |
+| ESP32 doesn't enumerate over USB | DevKit not seated, or CH340G solder issue | Re-seat DevKit. Reflow CH340G pins with extra flux + iron under loupe. Verify Y1 12 MHz crystal pads aren't cold-jointed. |
 | Relay clicks then immediately drops | Coil voltage sag during pull-in | Bump bulk cap on +5V rail to 1000 µF |
 | E-stop press doesn't kill motor | Relay NC contact wired in wrong line | Verify NO contact in series with **motor V+** trace, NOT in series with the gate signal |
 | Watchdog fault every few minutes | Vision task slow (UART blocking) | `WATCHDOG_MAX_INTERVAL_MS * 2` for vision (already in code — verify) |
@@ -1280,7 +1337,7 @@ PCB design (do these before placing the JLCPCB order):
 - [ ] Antenna keepout zone correctly positioned under the WROOM module's antenna.
 - [ ] CAM-dedicated 5 V buck (U2B + L2B + caps + diode) present and routed.
 - [ ] J7 ESP32-CAM 4-pin connector with 470 µF bulk cap and 100 nF decoupling.
-- [ ] AO3400A backlight MOSFET + 100 kΩ pull-down + 220 Ω gate series.
+- [ ] U6 ULN2803 channel 1 wired as backlight low-side switch (TFT pin 8 → U6 OUT1 → GND when input HIGH).
 - [ ] External 10 kΩ pull-up on GPIO 39 (R_pu_39).
 - [ ] CAM-PWR indicator LED visible on top side.
 - [ ] All 6 test points (TP1..TP6) accessible from the top side.
@@ -1295,9 +1352,9 @@ Bring-up:
 Safety:
 - [ ] E-stop test: pressing mushroom kills motor in < 50 ms.
 - [ ] Watchdog test: `delay(5000)` in motor task triggers `[wdt] HUNG: motor=...`.
-- [ ] Overcurrent test: stall motor → `FAULT_OVERCURRENT` raised in < 100 ms.
+- [ ] (v3 only) Overcurrent test: stall motor → `FAULT_OVERCURRENT` raised in < 100 ms. *Skipped in v2.2 — L293L has no IS pin.*
 - [ ] Stall test: blocked deck → `FAULT_STALL` after 2 s.
-- [ ] Layered brownout test: rail drop → BTS7960 UVLO → ESP32 brownout reset (all expected to fire).
+- [ ] Layered brownout test: rail drop → L293L logic-supply dropout (FAULT_STALL within 2 s) → ESP32 brownout reset (all expected to fire).
 
 Documentation:
 - [ ] `docs/05_electronics_design.md` updated to reflect the new project (link to the new schematic files, document any deviations from this guide).

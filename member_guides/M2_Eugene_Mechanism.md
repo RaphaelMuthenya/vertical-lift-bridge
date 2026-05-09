@@ -29,7 +29,7 @@ The bridge has two vertical guide towers, one motor with a cable drum, four guid
 | Mechanical assembly photos | `docs/build_log/` | ❌ create — photo every step, JPEG, < 2 MB each |
 | `docs/cal_log.md` | `docs/` | ❌ create — record CAL_COUNTS_PER_MM measurement runs |
 
-**Not your work:** PCB (M5), traffic lights (M4), vision (M3). You consume the `g_motor_cmd_queue` (FreeRTOS queue M1 created), apply the command via the BTS7960, and write back to `g_status.deck_position_mm`, `g_status.motor_current_ma`, `g_status.top_limit_hit`, `g_status.bottom_limit_hit`.
+**Not your work:** PCB (M5), traffic lights (M4), vision (M3). You consume the `g_motor_cmd_queue` (FreeRTOS queue M1 created), apply the command via the L293L module, and write back to `g_status.deck_position_mm`, `g_status.top_limit_hit`, `g_status.bottom_limit_hit`. (`g_status.motor_current_ma` stays at 0 in v2.2 — the L293L has no current-sense pin.)
 
 ---
 
@@ -72,11 +72,11 @@ Order from the BOM (`bom/VLB_Group7_BOM.xlsx`) by **end of week 0**. Critical me
 - 1 mm braided steel cable, 5 m — ~KES 200.
 - M3 × 8/12/16 socket cap screws (mixed pack of 100) — ~KES 400.
 - M8 × 80 axle bolt with locknut — ~KES 50.
-- 2 × KW12-3 microswitches (limit switches) — ~KES 50 each.
-- 1 × BTS7960 motor driver module — ~KES 750 from Pixel Electric.
+- 4 × KW11-3Z microswitches (limit switches, 1 per tower top + 1 per tower bottom; BOM line 11) — ~KES 80 each.
+- 1 × L293L H-bridge motor driver module (BOM line 2; the local "L293L module-48W,2A" sold at K-Technics) — ~KES 500.
 - 2 × SG90 9 g servos — ~KES 200 each.
 
-If your BOM total looks different from the README's KES 24,825, there's been drift — flag M5 immediately.
+If your BOM total looks different from the README's KES 25,678, there's been drift — flag M5 immediately.
 
 ---
 
@@ -213,11 +213,11 @@ This determines whether the deck rises smoothly or jams.
 3. Hang on the cable terminals. The boxes should hang freely with ~50 mm clearance from the tower face.
 4. **Note:** the firmware ALSO simulates a dynamic counterweight system (the water tanks on the HMI). The static lead boxes are the real thing; the simulation is for HMI demo theatre. They don't physically interact.
 
-### 4.7 Limit switches (KW12-3 microswitches)
+### 4.7 Limit switches (KW11-3Z microswitches)
 **You only have ONE shared limit signal pin** — `PIN_LIMIT_ANYHIT` (GPIO 39). Both top and bottom switches feed into it via a diode-OR network on the PCB (M5's design).
 
 **For breadboard prototyping** (before the PCB arrives):
-1. Mount one KW12-3 at top of left tower (where the deck arrives at full height).
+1. Mount one KW11-3Z at top of left tower (where the deck arrives at full height).
 2. Mount the other at bottom of left tower (where the deck rests).
 3. Wire NC contacts of **both** switches in parallel through 1N4148 diodes (cathodes together at GPIO 39).
 4. Add a **10 kΩ pull-up resistor** from GPIO 39 to 3.3 V. **GPIO 39 is input-only and has no internal pull-up — without this external resistor, the input floats and registers spurious limit hits.**
@@ -238,49 +238,66 @@ You **must** pass this test before applying motor power. A binding deck under mo
 
 ---
 
-## Step 5 — Wire up the BTS7960 motor driver
+## Step 5 — Wire up the L293L motor-driver module
 
-### 5.1 BTS7960 module pinout
-The BTS7960 dual H-bridge "red" module sold in Nairobi has 8 pins on the logic side:
+> **Why L293L not BTS7960?** v2.2 right-sized the H-bridge to match the
+> JGA25-370's actual ~600 mA load. The L293L is also the unit specified
+> in the final BOM (line 2) and stocked at K-Technics (KES 500). It has
+> no current-sense output, so `motor_current_ma` always reads 0 in v2.2
+> — the L293L's internal thermal-shutdown is the safety net.
+
+### 5.1 L293L module pinout
+The "L293L H-bridge driver module-48W, 2A" sold by K-Technics typically
+exposes the following on its 6-pin logic header:
 
 | Pin | Connect to | Notes |
 |---|---|---|
-| RPWM | ESP32 GPIO 25 (`PIN_MOTOR_IN1`, `PIN_MOT_RPWM`) | Forward/up PWM input |
-| LPWM | ESP32 GPIO 26 (`PIN_MOTOR_IN2`, `PIN_MOT_LPWM`) | Reverse/down PWM input |
-| R_EN | 5 V (always enabled) | Right-half enable — tie HIGH |
-| L_EN | 5 V (always enabled) | Left-half enable — tie HIGH |
-| R_IS | ESP32 GPIO 34 (`PIN_MOTOR_VPROPI`, `PIN_MOT_VPROPI`) | Current sense out (active high, 8.5 mV/A typical) |
-| L_IS | (leave open or tie to R_IS) | Mirror — not used |
-| VCC | 5 V | Logic supply |
+| ENA | 5 V (jumper to VCC, always enabled) | Channel-1 enable — tie HIGH so PWM rides on IN1/IN2 |
+| IN1 | ESP32 GPIO 25 (`PIN_MOTOR_IN1`, `PIN_MOT_IN1`) | Forward/up PWM input |
+| IN2 | ESP32 GPIO 26 (`PIN_MOTOR_IN2`, `PIN_MOT_IN2`) | Reverse/down PWM input |
+| ENB | (leave on jumper) | Channel-2 unused — single motor only |
+| IN3, IN4 | (leave open / NC) | Channel-2 unused |
+| VCC | 5 V (logic) | Module logic supply |
 | GND | GND | Common ground with ESP32 |
 
 And the power side (screw terminals):
 
 | Terminal | Connect to |
 |---|---|
-| B+ | 12 V power input |
-| B− | GND |
-| M+ | Motor wire (red) |
-| M− | Motor wire (black) |
+| Vmot (B+) | 12 V power input (through the safety relay's NO contact in production) |
+| GND (B−) | GND |
+| OUT1 (M+) | Motor wire (red) |
+| OUT2 (M−) | Motor wire (black) |
 
 ### 5.2 Breadboard wiring (before the PCB exists)
-1. Place the BTS7960 module on a piece of cardboard or a heatsink (it gets warm under load, ~50 °C).
-2. Connect logic side to the ESP32 per the pinout above. Use **22 AWG hookup wire**, length < 30 cm.
-3. Connect 12 V supply to B+ / B−. Use a **bench supply current-limited to 1 A initially**.
-4. **GROUND BOTH SUPPLIES TOGETHER.** ESP32 GND ↔ BTS7960 GND ↔ bench supply GND. Without common ground, current sense reads garbage.
-5. Connect motor wires to M+ and M−. Polarity decides direction; you'll fix it in firmware if reversed.
+1. Place the L293L module on a small heatsink or piece of cardboard. Under
+   normal load it stays cool (< 40 °C); during a stall it can hit 80 °C
+   before the internal thermal-shutdown trips.
+2. Connect the logic side to the ESP32 per the pinout above. Use **22 AWG
+   hookup wire**, length < 30 cm.
+3. Connect 12 V supply to Vmot/GND. Use a **bench supply current-limited
+   to 1 A initially**.
+4. **GROUND BOTH SUPPLIES TOGETHER.** ESP32 GND ↔ L293L GND ↔ bench supply
+   GND. Without common ground the IN1/IN2 logic levels are undefined.
+5. Connect motor wires to OUT1 and OUT2. Polarity decides direction;
+   reverse the wires if `MOTOR_UP` actually lowers the deck.
 
 ### 5.3 Smoke test the wiring (still no firmware changes)
 1. Power the bench supply on at 12 V, current limit 1 A.
 2. Power the ESP32 via USB.
-3. Open serial monitor. The boot banner should print as before. The motor should NOT spin.
-4. If the motor spins by itself the moment you power on: PWM pins are floating — confirm GPIO 25 / 26 are listed as OUTPUT in `motor_driver_init()`.
+3. Open serial monitor. The boot banner should print as before, ending
+   with `[motor] init OK (L293L module, no current-sense)`. The motor
+   should NOT spin.
+4. If the motor spins by itself the moment you power on: PWM pins are
+   floating during boot. The L293L's IN1/IN2 inputs have internal
+   pull-downs but a long jumper can still float — keep the wires short
+   and confirm GPIO 25 / 26 are listed as OUTPUT in `motor_driver_init()`.
 
 ---
 
 ## Step 6 — Encoder / position feedback (potentiometer)
 
-The current design uses a **10 kΩ linear potentiometer** as the deck position sensor (NOT a Hall encoder, despite the historical naming `PIN_ENC_A` aliased to `PIN_DECK_POSITION` = GPIO 35).
+The current design uses a **10 kΩ linear potentiometer** as the deck position sensor on `PIN_DECK_POSITION` (GPIO 35). The legacy `PIN_ENC_A` Hall-encoder alias was removed in v2.2 — it never matched the physical hardware.
 
 ### 6.1 Wire the pot
 1. Pot has 3 pins: 1 (one end of resistive track), 2 (wiper), 3 (other end).
@@ -316,8 +333,8 @@ void setup() {
     // Setup PWM
     ledcSetup(0, 20000, 13);  // ch0, 20 kHz, 13-bit
     ledcSetup(1, 20000, 13);  // ch1
-    ledcAttachPin(PIN_MOT_RPWM, 0);
-    ledcAttachPin(PIN_MOT_LPWM, 1);
+    ledcAttachPin(PIN_MOT_IN1, 0);
+    ledcAttachPin(PIN_MOT_IN2, 1);
     ledcWrite(0, 0);
     ledcWrite(1, 0);
 
@@ -394,7 +411,7 @@ Tune by observation:
 | Deck rises too fast (< 4 s for 175 mm) | Drop `RAISE_DEFAULT` by 500 |
 | Deck rises sluggishly or stalls near top | Bump `RAISE_DEFAULT` by 500 |
 | Lowering takes > 8 s | Bump `LOWER_DEFAULT` by 500 |
-| Lowering runs away (free-fall feel) | Bump `LOWER_DEFAULT` by 1000 (more BTS7960 brake torque) |
+| Lowering runs away (free-fall feel) | Bump `LOWER_DEFAULT` by 1000 (more L293L brake torque on the way down) |
 
 Target: **6–8 s up, 5–7 s down**. Update the values in `system_types.h`, commit with a message like `tune(motor): raise=5000 lower=5000 — measured 6.8s up, 6.1s down`.
 
@@ -445,7 +462,7 @@ This is the moment you've been building toward.
 
 ### 10.1 Pre-flight
 - Bridge fully assembled, towers square, cables tensioned, manual lift smooth.
-- Motor wired to BTS7960 wired to ESP32 per Step 5.
+- Motor wired to L293L module wired to ESP32 per Step 5.
 - Limit switches wired with diode-OR + pull-up per Step 4.7.
 - Pot wired per Step 6.
 - `CAL_COUNTS_PER_MM` measured per Step 7.
@@ -480,10 +497,10 @@ Use the failure cookbook in Step 12.
 |---|---|---|
 | 1 | Wave 1 + 2 prints done. Towers + base assembled. | Photo of standing rig in `docs/build_log/` |
 | 2 | Wave 3 + 4 prints done. Cable + counterweight system functional. Manual lift smooth. | M1 confirms manual lift smooth |
-| 3 | Motor + drum installed. BTS7960 wired. `CAL_COUNTS_PER_MM` measured (≠ 42). | `docs/cal_log.md` committed |
+| 3 | Motor + drum installed. L293L module wired. `CAL_COUNTS_PER_MM` measured (≠ 42). | `docs/cal_log.md` committed |
 | 4 | Limit switches wired with diode-OR + pull-up. Top/bottom events fire correctly. | M1 confirms FSM cycles |
 | 5 | Full closed-loop: serial `r` → raises to top, `l` → lowers to bottom. | M1 sign-off |
-| 6 | Stall + overcurrent fault tests pass | M5 sign-off |
+| 6 | Stall fault test passes (overcurrent reserved-but-unset in v2.2 — L293L has no IS) | M5 sign-off |
 | 7 | 10-cycle endurance run (back-to-back, no manual intervention). | No mechanical failures, < 5 mm cumulative position drift |
 | 8 | Demo polish — cable wear check, lubrication. | Photo of clean rig committed |
 
@@ -499,9 +516,9 @@ Use the failure cookbook in Step 12.
 | Counts/mm reads wildly different each run | Pot wiper noisy | Add 100 nF cap from GPIO 35 to GND |
 | `[fault] raised: stall` mid-travel | Cable jammed in pulley groove | Re-route cable so it stays inside groove on every pulley |
 | Drum slips on motor shaft | Grub screw loose / shaft flat missing | Apply blue threadlocker; add a second grub screw 90° around |
-| Deck overshoots top limit | BTS7960 brake too weak / motor coasts | Bump `MOTOR_PWM_LOWER_DEFAULT` to increase brake torque, or add small physical bump-stop |
+| Deck overshoots top limit | L293L brake too weak / motor coasts | Bump `MOTOR_PWM_LOWER_DEFAULT` to increase brake torque, or add small physical bump-stop |
 | Motor draws 1.5 A continuously while idle | PWM never reaches 0% | Check `motor_driver_apply()` switch — STOP/COAST cases must `ledcWrite(*, 0)` |
-| Motor doesn't spin even with valid PWM | R_EN / L_EN not tied HIGH | Connect R_EN and L_EN to 5 V on the BTS7960 module |
+| Motor doesn't spin even with valid PWM | ENA jumper not seated on the L293L module | Reseat the ENA jumper to VCC (or solder a wire from ENA to +5V) |
 | Simulated counterweight never reaches `EVT_CW_READY` | `task_counterweight` not created | Check main.cpp `setup()` has `xTaskCreatePinnedToCore(task_counterweight, ...)` |
 | Limit switch fires constantly without anything touching | Floating GPIO 39 | Add 10 kΩ external pull-up from GPIO 39 to 3.3 V — required, no internal pull-up |
 
@@ -520,11 +537,11 @@ Firmware:
 - [ ] `CAL_COUNTS_PER_MM` measured on hardware (not the placeholder 42). Logged in `docs/cal_log.md`.
 - [ ] PWM duties tuned: raise = 6–8 s, lower = 5–7 s.
 - [ ] Stall fault triggers within 2 s when motor blocked.
-- [ ] Overcurrent fault triggers when bridge held against top limit.
+- [ ] (v3) Overcurrent fault triggers when bridge held against top limit. *Skipped in v2.2 — the L293L module has no current-sense pin.*
 - [ ] Both limit switches trip events fire to FSM.
 - [ ] Counterweight simulation posts `EVT_CW_READY` within 5 s of state entry.
 - [ ] 5 consecutive raise+lower cycles complete without intervention.
-- [ ] Motor current measured at top + bottom — < 1500 mA both directions.
+- [ ] Motor current measured at top + bottom with an external multimeter — < 1500 mA both directions. (Firmware cannot measure this in v2.2.)
 
 Documentation:
 - [ ] Build log photos committed to `docs/build_log/` (≥ 15 photos).

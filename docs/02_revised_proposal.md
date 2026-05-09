@@ -1,7 +1,7 @@
 # EEE 2412 — Microprocessors II
 # REVISED PROJECT PROPOSAL — Group 7 — JKUAT
 ## Automatic Vertical Lift Bridge Control System
-### v2.0 — April 2026 (replaces v1.0 dated April 2026)
+### v2.2 — May 2026 (supersedes v2.0 of April 2026)
 
 | Member | Adm. No. | Role |
 |---|---|---|
@@ -17,9 +17,9 @@ Lecturer: Dr. P. K. Kihato
 
 ## 1. EXECUTIVE SUMMARY
 
-This proposal presents the **Automatic Vertical Lift Bridge Control System**, a 1.2 m × 0.6 m PLA-printed scale model bridge that demonstrates every learning outcome of EEE 2412 (Microprocessors II) at JKUAT. The bridge is automatic and unattended: a colour camera at the road approach watches for vehicles, and a pair of dual-beam ultrasonic sensors guards each end of the waterway and tells the controller when a vessel is approaching. The ESP32-WROOM-32 microcontroller runs FreeRTOS with seven priority-scheduled tasks across its two CPU cores, executes a 10-state finite state machine (FSM) with full safety interlocks, drives a single 12 V geared DC motor through a BTS7960 H-bridge (sense-resistor over-current protection), and presents the entire system state on a 2.8-inch ILI9341 TFT touchscreen running a bespoke LVGL dashboard.
+This proposal presents the **Automatic Vertical Lift Bridge Control System**, a 1.2 m × 0.6 m PLA-printed scale model bridge that demonstrates every learning outcome of EEE 2412 (Microprocessors II) at JKUAT. The bridge is automatic and unattended: a colour camera at the road approach watches for vehicles, and two pairs of dual-beam ultrasonic sensors guard each end of the waterway and tell the controller when a vessel is approaching and from which direction. The ESP32-WROOM-32E microcontroller runs FreeRTOS with **eight priority-scheduled tasks** across its two CPU cores, executes a **9-state finite state machine** (FSM) with full safety interlocks, drives a single 12 V geared DC motor through an **L293L 2 A H-bridge module** (the L293L's internal thermal-shutdown is the over-current safety net), and presents the entire system state on a 2.8-inch ILI9341 TFT touchscreen running a bespoke LVGL dashboard. A 5-button resistor-ladder front panel provides a defence-in-depth operator input alongside the touchscreen.
 
-Mechanically, the model is a **vertical lift bridge with dual counterweights**. A single JGA25-370 geared DC motor turns a Ø30 mm cable drum at the head of the left tower; a 1 mm braided steel cable runs from the drum, over twin guide pulleys at the top of each tower, and connects to two 120 g counterweights that fall as the deck rises. The counterweights balance the deck mass, so the motor must overcome only friction and acceleration — a single motor is sufficient at this 1:25 model scale; at full scale two motors with electronic synchronisation would be specified, and this is documented in the design log. The system replaces all infrared deck-clearance sensing from the v1.0 proposal with a **camera-based detection module** built on an ESP32-CAM (OV2640 + ESP32-S board) running an OpenCV-equivalent embedded vision pipeline that streams JPEG frames over UART to the main controller and reports vehicle presence, approach direction, and detection confidence on the LVGL dashboard. Every component on the bill of materials is sourced locally — Nerokas Enterprises, Pixel Electric, ASK Electronics, K-Technics, and the Luthuli/Sagana electronics market — with confirmed prices in Kenyan Shillings; no item depends on international shipping. The total project cost is **KES 22,184** (≈ KES 4,437 per member). All design files (KiCad PCB, OpenSCAD CAD, firmware source, LVGL screen mockups) are version-controlled at github.com/kiogimwenda/vertical-lift-bridge and form an integrated portfolio that maps directly onto the EEE 2412 course outline.
+Mechanically, the model is a **vertical lift bridge with dual counterweights**. A single JGA25-370 geared DC motor turns a Ø30 mm cable drum at the head of the left tower; a 1 mm braided steel cable runs from the drum, over twin guide pulleys at the top of each tower, and connects to two 120 g counterweights that fall as the deck rises. The counterweights balance the deck mass, so the motor must overcome only friction and acceleration — a single motor is sufficient at this 1:25 model scale; at full scale two motors with electronic synchronisation would be specified, and this is documented in the design log. The system replaces all infrared deck-clearance sensing from the v1.0 proposal with a **camera-based detection module** built on an ESP32-CAM (OV2640 + ESP32-S board) running an embedded frame-difference vision pipeline that streams one JSON line per frame over UART to the main controller and reports vehicle presence, motion percentage, and bounding box on the LVGL dashboard. Every component on the bill of materials is sourced locally — Nerokas Enterprises, Pixel Electric, ASK Electronics, K-Technics, and the Luthuli/Sagana electronics market — with confirmed prices in Kenyan Shillings; no item depends on international shipping. The total project cost is **KES 25,678** (≈ KES 5,136 per member). All design files (KiCad 10 PCB, OpenSCAD CAD, firmware source, LVGL screen mockups) are version-controlled at github.com/kiogimwenda/vertical-lift-bridge and form an integrated portfolio that maps directly onto the EEE 2412 course outline.
 
 ---
 
@@ -39,17 +39,18 @@ This project addresses all three through full automation: a mechanical synchroni
 
 ```
                         ┌─────────────────────────────────────┐
-                        │    Main MCU — ESP32-WROOM-32        │
-                        │    (FreeRTOS, 7 tasks, dual core)   │
+                        │    Main MCU — ESP32-WROOM-32E       │
+                        │    (FreeRTOS, 8 tasks, dual core)   │
                         │                                     │
-   ULTRASONICS ─SPI/───►│  • FSM Engine                       │
+   ULTRASONICS ─GPIO──►│  • FSM Engine (9 states)            │
    4 × HC-SR04          │  • Motor Control (LEDC PWM)         │◄──┐
-                        │  • Sensor Poll                      │   │
-   E-STOP ───IRQ───────►│  • Safety Watchdog                  │   │
-   8× LIMITS ─IRQ──────►│  • Traffic Control (74HC595)        │   │
-   POT (deck pos) ─ADC─►│  • HMI Input + LVGL Display         │   │
+                        │  • Sensor Poll (20 Hz round-robin)  │   │
+   E-STOP ───IRQ───────►│  • Safety Watchdog (TWDT + sw)      │   │
+   4× LIMITS ─OR──────►│  • Traffic Control (74HC595)        │   │
+   POT (deck pos) ─ADC─►│  • Counterweight simulation (20 Hz) │   │
+   BTN-LADDER ────ADC─►│  • HMI Input + LVGL Display         │   │
                         └──┬─────────────┬──────────────┬─────┘   │
-                           │ SPI         │ UART2 (115k2)│ I2C(opt)│ BTS7960
+                           │ HSPI        │ UART2 (115k2)│ I2C(opt)│ L293L
                            ▼             ▼              ▼         ▼
                     ┌──────────┐  ┌────────────┐    ┌──────┐  ┌──────┐
                     │  ILI9341 │  │ ESP32-CAM  │    │  …   │  │MOTOR │
@@ -82,10 +83,13 @@ The single PCB carries the ESP32-WROOM, motor driver, shift register, USB-UART, 
 | D4 | Footprint | 900 × 600 mm | **1200 × 600 mm** | Adds 150 mm of road approach on each side for camera FOV and sensible vehicle queue length. |
 | D5 | Bridge deck material | 5 mm acrylic | **PLA, FDM printed** | Brings deck into the same FDM workflow as the rest of the parts; keeps tolerances consistent with mating brackets. |
 | D6 | HMI framework | TFT_eSPI direct draws | **LVGL 9.2.2 over TFT_eSPI driver** | LVGL gives anti-aliased widgets, animations, themes, touch input, screen manager, and is the industry-standard embedded GUI in 2026; required for a "bespoke dashboard". |
-| D7 | HMI input | 4 pushbuttons only | **XPT2046 resistive touch + pushbuttons retained for E-stop / Mode** | Touch enables on-screen navigation across 5 screens; pushbuttons remain as the "always works even if touch panel cracks" emergency input — a defence-in-depth pattern. |
+| D7 | HMI input | 4 pushbuttons only | **XPT2046 resistive touch + 5-button resistor-ladder front panel (RAISE / LOWER / HOLD / CLEAR / NEXT)** | Touch enables on-screen navigation across 5 screens; the resistor-ladder panel remains as the "always works even if touch panel cracks" defence-in-depth path. The ladder shares one ADC pin (GPIO 34) — feasible in v2.2 because the L293L motor driver has no current-sense output (cf. D11 below). |
 | D8 | Custom font | LVGL Montserrat default | **Custom LVGL font generated from Inter at 12/16/24/36 px** | Default fonts on a black panel look generic; Inter is open-licensed and has both a Display cut for the 36 px hero metric and a Body cut for 16 px labels. |
 | D9 | Group number | — | **Group 7** | Corrected to Group 7. |
 | D10 | Counterweight type | Static only (lead-filled boxes) | **Static physical + simulated dynamic (firmware)** | The physical counterweights remain static lead boxes. The firmware adds a software-simulated dynamic counterweight module that models water tanks with pumps and drain valves. Water levels, pump status, and balance state are displayed in real time on the TFT dashboard. This demonstrates the concept of adaptive counterweight balancing without requiring physical plumbing. |
+| D11 | Motor driver | BTS7960 (43 A H-bridge) | **L293L module (2 A H-bridge)** | The JGA25-370 draws ~600 mA nominal under counterweight balance, well within the L293L's 2 A continuous rating. The L293L is the unit specified in the final BOM and stocked at Pixel and K-Technics. Migrating away from BTS7960 also frees GPIO 34 from the always-active IS pin, restoring the resistor-ladder operator panel (cf. D7). Trade-off: the L293L exposes no current-sense output, so `FAULT_OVERCURRENT` is reserved-but-never-set in v2.2; the L293L's internal thermal-shutdown protects the silicon and `FAULT_STALL` (no position change while energised) covers the dominant failure mode. |
+| D12 | Backlight + relay-coil + buzzer driver | AO3400A MOSFET + 2N7000 + dedicated piezo driver | **2 × ULN2803 Darlington array channels** | Single-chip 8-channel low-side switch is what the BOM specifies. Same firmware-level logic-HIGH-= channel-on polarity, so no firmware change. Saves part count and simplifies PCB layout. |
+| D13 | TFT panel | IPS variant of ILI9341 | **TN variant of ILI9341 (TJCTM24028-SPI)** | The TN module is the unit on the BOM (KES 1,800 from ASK Electronics). Viewing-angle compromise is acceptable on a 35°-tilted operator console; cost saving redirected to the dedicated CAM 5 V buck. |
 
 ### 4.1 Counterweight sizing calculation
 
@@ -168,9 +172,9 @@ JGA25-370 stall torque          = 1.7 kgf·cm  → safety factor ≈ 45×    ✓
 |---|---|---|
 | **1. Interfacing — Parallel (Intel 8255 PPI handshake modes)** | The 74HC595 acts as our I/O expander; we explicitly draw the analogy in the report and code-comment the SH/CP/STCP "handshake" against PPI mode-0 strobed output. We also implement an SR-style poll across the operator pushbutton matrix. | M4 |
 | **1. Interfacing — DMA devices** | LVGL's TFT_eSPI flush callback uses ESP32 SPI DMA channels; we instrument and report effective DMA throughput. | M4 (HMI), M5 audits |
-| **1. Interfacing — Serial Communication devices** | UART0 → CP2102N → USB-C for PC; UART2 → ESP32-CAM at 115 200 baud; SPI to TFT and XPT2046; I²C reserved for future expansion. | M5 (PCB), M3 (vision) |
+| **1. Interfacing — Serial Communication devices** | UART0 → CH340G → USB-C for PC; UART2 → ESP32-CAM at 115 200 baud; SPI to TFT and XPT2046; I²C reserved for future expansion. | M5 (PCB), M3 (vision) |
 | **1. Interfacing — Timers** | LEDC PWM for motor and backlight; high-resolution `esp_timer` for FreeRTOS tick into LVGL via `lv_tick_inc`; HC-SR04 echo timing using `gpio_set_intr` rising/falling edge ISRs. | M2, M3 |
-| **2. Sensors and Actuators** | HC-SR04 ultrasonics, KW12-3 limit switches, OV2640 camera, potentiometer for deck position (ADC), servos (SG90), LEDs, buzzer, DC motor, relay. Full datasheet integration. | M3, M2, M4, M5 |
+| **2. Sensors and Actuators** | HC-SR04 ultrasonics, KW11-3Z limit switches, OV2640 camera, potentiometer for deck position (ADC), servos (SG90), LEDs, buzzer, DC motor, relay. Full datasheet integration. | M3, M2, M4, M5 |
 | **3. Memory Mapping (Linear / Fully Decoded)** | The ESP32 memory map (IRAM, DRAM, SPIRAM optional, flash) is documented; LVGL is configured for partial-buffer rendering in DRAM; vision frame buffer in PSRAM on the ESP32-CAM (when fitted). The 74HC595 chain illustrates linear decoding. | M5 (system memory map), M3 (PSRAM) |
 | **4. Interrupting sequences — Operations / Devices / Polling / IDT** | E-stop and limit switches are level-triggered ISRs (Cortex-NVIC vector table is the IDT analogue); ultrasonics use edge ISRs; FSM event queue is polled at 10 ms; timer ISR for watchdog feeding. We tabulate ISR latency vs. polling latency in the report. | M5 (ISRs), M1 (poll) |
 | **5. Program Structure — Modularization, PIC, Parameter passing, Subroutines** | The firmware is module-per-directory (`fsm/`, `motor/`, `sensors/`, …). PIC = position-independent C/C++ compiled by xtensa-esp32-elf-gcc. All inter-task communication uses queues with typed parameters (`MotorCommand_t`, `SystemEvent_t`). | M1 |

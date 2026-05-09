@@ -14,7 +14,7 @@ Three independent visual surfaces:
 
 1. **Traffic lights (74HC595 + LEDs).** 6 LEDs total: 3 for road traffic (R/Y/G), 3 for marine traffic (R/Y/G). The state machine sets them via `traffic_lights_set_road()` / `traffic_lights_set_marine()`; you manage the 74HC595 chain and the bit map.
 2. **Buzzer (LEDC ch 5).** Active piezo. Plays chirps on barrier close/open, fault pattern when in STATE_FAULT, urgent pattern when in STATE_ESTOP.
-3. **TFT dashboard (LVGL on ILI9341 + XPT2046 touch).** 5 screens. Refreshed at 5 Hz from a thread-safe snapshot of `g_status`. All operator input is via the touchscreen (no hardware buttons in v2.1 — see Step 11).
+3. **TFT dashboard (LVGL on ILI9341 + XPT2046 touch).** 5 screens. Refreshed at 5 Hz from a thread-safe snapshot of `g_status`. Two operator-input paths: (a) the touchscreen (primary), and (b) a 5-button resistor-ladder front panel restored in v2.2 — see Step 11.
 
 ---
 
@@ -25,7 +25,7 @@ Three independent visual surfaces:
 | `firmware/src/traffic/traffic_lights.{h,cpp}` | 74HC595 LED chain | ✅ exists — you tune timing only |
 | `firmware/src/traffic/buzzer.{h,cpp}` | Piezo patterns on LEDC | ✅ exists — you may add new patterns |
 | `firmware/src/hmi/display.{h,cpp}` | **TEMPLATE** — infrastructure done, screens are yours | ✅ skeleton exists, screens are TODO |
-| `firmware/src/hmi/input.{h,cpp}` | Stubbed in v2.1 (touchscreen-only) | ✅ stub — leave alone |
+| `firmware/src/hmi/input.{h,cpp}` | 5-button resistor-ladder scan, restored in v2.2 | ✅ exists — you tune the ADC band tolerance only |
 | `firmware/assets/fonts/*.c` | Custom fonts (you generate via online tool) | ❌ create |
 | `firmware/assets/icons/*.c` | Custom icons (you generate via online tool) | ❌ create |
 | `docs/ui_design.md` | Sketches of each screen + design rationale | ❌ create |
@@ -99,7 +99,7 @@ Open `firmware/src/hmi/display.cpp`. Spend an hour reading it. The file structur
 | 14 | T_IRQ | GPIO 36 | `PIN_TOUCH_IRQ` |
 
 Common pitfalls:
-- **VCC voltage:** some modules accept only 3.3 V on the LED line — check silkscreen. If you connect 5 V to a 3.3-V-only LED, you fry the backlight transistor.
+- **VCC voltage:** some modules accept only 3.3 V on the LED line — check silkscreen. If you connect 5 V to a 3.3-V-only LED, you exceed the ULN2803 channel's saturation current and may damage the backlight LED chain on the panel.
 - **MISO floats at boot:** add a 10 kΩ pull-up from GPIO 12 to 3.3 V on breadboard. (PCB will have this.)
 - **Wires too long:** keep < 30 cm. Long SPI lines pick up noise.
 
@@ -108,7 +108,7 @@ Common pitfalls:
 2. After successful upload, the TFT should show a BOOT screen for 1.5 s, then auto-switch to a placeholder MAIN screen saying "MAIN (M4: design me)".
 3. Tap the **on-screen "Next" button** (top-right) to cycle: MAIN → TELEMETRY → FAULTS → SETTINGS → MAIN.
 
-> **The v2.1 build has no hardware buttons** — all input is via the XPT2046 touchscreen. (See Step 11 for why the resistor-ladder scheme was dropped.)
+> **v2.2 has both** the touchscreen *and* a 5-button resistor-ladder front panel. The touchscreen is primary; the panel is the survival path (see Step 11).
 
 If the screen is blank but backlight is on:
 - TFT_eSPI pin map mismatch. Check `User_Setup.h` flags in `platformio.ini` `build_flags` match the table above.
@@ -290,19 +290,11 @@ The counterweight simulation runs entirely in software (`firmware/src/counterwei
 
 The stub panel works out of the box. **You have full creative liberty to restyle it** — change colours, use arc gauges instead of bars, add icons for pumps/valves, animate the fill/drain transitions.
 
-### 6.1 Add motor current arc
-```cpp
-static lv_obj_t* s_arc_current = nullptr;
-// In factory:
-s_arc_current = lv_arc_create(scr);
-lv_arc_set_range(s_arc_current, 0, MOTOR_OVERCURRENT_MA);
-lv_arc_set_value(s_arc_current, 0);
-lv_obj_set_size(s_arc_current, 100, 100);
-lv_obj_align(s_arc_current, LV_ALIGN_TOP_LEFT, 10, 60);
-
-// In refresh_active() case HMI_SCREEN_TELEMETRY:
-if (s_arc_current) lv_arc_set_value(s_arc_current, abs(s_local.motor_current_ma));
-```
+### 6.1 Add motor current arc — *skip in v2.2*
+The L293L module has no current-sense pin, so `s_local.motor_current_ma`
+is hard-wired to 0 in v2.2. Skip the arc until the v3 PCB adds an INA169
+shunt amplifier. If you'd like a placeholder, use a static label
+"`Current: not measured (v2.2)`" instead of a live gauge.
 
 ### 6.2 Add motor-current sparkline
 ```cpp
@@ -320,7 +312,7 @@ lv_obj_align(s_chart, LV_ALIGN_BOTTOM_MID, 0, -10);
 
 // In refresh_active():
 if (s_chart && s_series) {
-    lv_chart_set_next_value(s_chart, s_series, abs(s_local.motor_current_ma));
+    lv_chart_set_next_value(s_chart, s_series, abs(s_local.deck_position_mm));  // pos chart in v2.2 (no current-sense)
 }
 ```
 
@@ -337,7 +329,7 @@ static lv_obj_t* s_fault_list = nullptr;
 
 struct FaultRow { uint32_t flag; const char* name; };
 static const FaultRow kFaultRows[] = {
-    { FAULT_OVERCURRENT,       "Motor overcurrent"  },
+    // FAULT_OVERCURRENT deprecated in v2.2 — omit (L293L has no IS pin)
     { FAULT_STALL,             "Motor stalled"      },
     { FAULT_LIMIT_BOTH,        "Both limits asserted" },
     { FAULT_POS_OUT_OF_RANGE,  "Position out of range" },
@@ -483,18 +475,67 @@ Suggested icon set (design or source from a free icon pack — credit the source
 
 ---
 
-## Step 11 — Front-panel buttons — REMOVED in v2.1 (read this once, then move on)
+## Step 11 — Front-panel buttons (5-button resistor ladder, restored in v2.2)
 
-The original 5-button resistor-ladder ADC scheme was dropped in v2.1. PIN_BTN_LADDER aliased to GPIO 34, which is also the BTS7960 motor current sense (IS pin). The IS pin presents ~1 kΩ source impedance at all times, which swamps any high-impedance resistor ladder tied to the same pin — software multiplexing by FSM state cannot fix the impedance collision. See `docs/known_limitations.md` (L1) for the full analysis.
+The v2.2 motor-driver migration (BTS7960 → L293L module) removed the
+GPIO 34 impedance collision that caused v2.1 to disable the panel. The
+panel is back, sharing operator input with the touchscreen.
 
-**What this means for your work:**
-- All operator input must be implemented as on-screen LVGL buttons (Steps 5–8 above).
-- Add a "Next" button (top-right) on every screen to cycle MAIN → TELEMETRY → FAULTS → SETTINGS.
-- Add HMI_CMD_RAISE / HMI_CMD_LOWER / HMI_CMD_HOLD / HMI_CMD_CLEAR_FAULT as on-screen buttons in the appropriate screen.
-- All call `hmi_cmd_post(HMI_CMD_*)` from their LVGL event callback.
-- `input_init()` and `input_tick()` are kept as no-op stubs — do not touch them, do not call them.
+### 11.1 Hardware
+The PCB exposes a 6-pin JST-XH header (J_PANEL) carrying:
 
-**v3 fix path:** A 74HC4051 analog mux on the next PCB revision restores the front-panel buttons. Cost ~KES 80, see `docs/known_limitations.md`.
+| Pin | Wire | Connect to |
+|---|---|---|
+| 1 | red | +3V3 (panel pull-up rail) |
+| 2 | brown | ADC (BTN_LADDER, GPIO 34) |
+| 3 | black | GND |
+| 4 | (n/c) | spare |
+| 5 | (n/c) | spare |
+| 6 | (n/c) | reset (to ESP32 EN if 6th button used) |
+
+Off-board, the 5 buttons + 5 × 1 kΩ resistors form a series ladder per
+`docs/05_electronics_design.md` §5.5a. A 10 kΩ pull-up to +3V3 sits on
+the PCB.
+
+### 11.2 Firmware (already done — `firmware/src/hmi/input.cpp`)
+`input_init()` configures the ADC pin and `input_tick()` is called from
+`task_safety` at 20 Hz. Each call does a 4-sample average, classifies into
+one of 6 bands (idle + 5 buttons), debounces with N stable samples
+(N = 3), and posts the matching `HmiCmd_t` on a true rising edge.
+
+Mapping:
+
+| Button | HmiCmd_t | What it does in the FSM |
+|---|---|---|
+| BTN1 | HMI_CMD_RAISE | EVT_OPERATOR_RAISE — start a cycle from IDLE |
+| BTN2 | HMI_CMD_LOWER | EVT_OPERATOR_LOWER — exit RAISED_HOLD early |
+| BTN3 | HMI_CMD_HOLD | EVT_OPERATOR_HOLD — pause mid-travel (M1's TODO) |
+| BTN4 | HMI_CMD_CLEAR_FAULT | EVT_FAULT_CLEARED — leave STATE_FAULT |
+| BTN5 | HMI_CMD_NEXT_SCREEN | LVGL screen rotation: MAIN → TELEMETRY → FAULTS → SETTINGS |
+
+### 11.3 Bench test
+1. Plug the 6-pin panel cable into J_PANEL on the PCB (or wire the
+   ladder on a breadboard with a 10 kΩ pull-up to +3V3 and the 5 × 1 kΩ
+   resistors in series to GND).
+2. Boot the firmware. Open serial monitor.
+3. Press BTN1: expect `[fsm] 0 -> 1` (or whichever transition the
+   current state allows for `EVT_OPERATOR_RAISE`).
+4. Press BTN5: the LVGL screen should swap MAIN → TELEMETRY in ~200 ms.
+5. If a press posts the wrong command: temporarily print the raw ADC
+   reading inside `input_tick()`:
+   ```cpp
+   Serial.printf("[btn] adc=%u\n", adc);
+   ```
+   Compare against the band table in `input.cpp`. If your readings drift
+   by more than ±80, widen the `BAND_TOL` constant (top of `input.cpp`)
+   to ±120 and re-test.
+6. **Touchscreen is unaffected** — it shares the same `g_hmi_cmd_queue`,
+   so on-screen buttons and physical buttons interleave cleanly.
+
+### 11.4 Why we kept both
+Defence-in-depth. A cracked touch panel still leaves the operator with
+the 5 buttons. A noisy ADC band still leaves the touchscreen. The two
+paths share *one* event queue so the FSM is agnostic to the source.
 
 ---
 

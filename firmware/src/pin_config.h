@@ -4,17 +4,24 @@
 // v2.1 — May 2026.  Rail voltage sense + operator-panel ladder ADC removed
 //                   (impedance collision on GPIO 34/35 with BTS7960 IS pin
 //                   and deck-position pot — see docs/known_limitations.md).
+// v2.2 — May 2026.  Motor driver migrated BTS7960 -> L293L module to match
+//                   the final BOM. The L293L has no current-sense output,
+//                   so GPIO 34 is freed and the operator-panel resistor
+//                   ladder is restored on PIN_BTN_LADDER. Rail-voltage
+//                   sense remains disabled (deck-position pot still owns
+//                   GPIO 35 with low source impedance).
 
 #pragma once
 
 // ====================== POWER =======================================
-// (no GPIOs; LM2596 + AMS1117 are pure analogue)
+// (no GPIOs; LM1084 buck modules + AMS1117 are pure analogue)
 
-// ====================== MOTOR  (BTS7960 H-bridge driven by LEDC) ====
-#define PIN_MOTOR_IN1        25     // LEDC ch 0 -> BTS7960 RPWM (forward/up)
-#define PIN_MOTOR_IN2        26     // LEDC ch 1 -> BTS7960 LPWM (reverse/down)
-#define PIN_MOTOR_VPROPI     34     // ADC1_CH6, current sense from BTS7960
-#define PIN_MOTOR_RELAY      32     // Active-HIGH gate to SRD-05VDC relay coil
+// ====================== MOTOR  (L293L module, IN1/IN2 PWM)  =========
+// The L293L module has its EN pin tied HIGH on board, so PWM rides on
+// IN1/IN2 directly (compatible drop-in for the older BTS7960 firmware).
+#define PIN_MOTOR_IN1        25     // LEDC ch 0 -> L293L IN1 (forward/up)
+#define PIN_MOTOR_IN2        26     // LEDC ch 1 -> L293L IN2 (reverse/down)
+#define PIN_MOTOR_RELAY      32     // Active-HIGH input to ULN2803 relay-coil channel
 #define PIN_DECK_POSITION    35     // ADC1_CH7, deck position potentiometer
 
 #define LEDC_MOTOR_FREQ_HZ   20000  // Above audible
@@ -50,12 +57,12 @@
 #define PIN_US3_ECHO         23
 #define PIN_US4_TRIG          1     // downstream Beam B (UART0 TX repurposed only after upload)
 #define PIN_US4_ECHO          3     // (UART0 RX)
-// NOTE: US4 conflicts with USB serial. Use USBUart (CP2102N) only at upload time.
+// NOTE: US4 conflicts with USB serial. Use USBUart (CH340G) only at upload time.
 //       After boot, GPIO1 / GPIO3 are taken over for ultrasonics.
 //       If conflict bothers you in production, swap US4 to GPIO16/17 (but those are now UART2).
 //       The agreed allocation keeps UART2 for vision; live with the GPIO1/3 trade-off.
 
-// ====================== LIMIT SWITCHES (KW12-3 ×8) ==================
+// ====================== LIMIT SWITCHES (KW11-3Z ×4 — BOM line 11) ===
 //  Wired through 74HC595? NO — we have spare GPIOs and want fast IRQs.
 //  All 8 switches wired in two parallel 4-input groups using diodes,
 //  giving us per-tower TOP and BOTTOM signals on 4 GPIOs.
@@ -77,7 +84,7 @@
 #define PIN_LIMIT_CP_OUT      0     // shared with PL? No — separate pin needed:
 #undef  PIN_LIMIT_CP_OUT
 #define PIN_LIMIT_CP_OUT      4     // shared with TFT_RST? Conflict.
-// FINAL DECISION: drop the 74HC165 plan; KW12-3 limits are read via the
+// FINAL DECISION: drop the 74HC165 plan; KW11-3Z limits are read via the
 // 74HC595 sister chip 74HC165 only if pins permit. Pins do not permit.
 // Use the existing 74HC595 OE/OR-matrix idea: limit switches feed a wired-OR
 // diode chain into a SINGLE GPIO that is the "any limit hit" flag, and the
@@ -93,7 +100,7 @@
 #define PIN_VISION_RX        16     // UART2 RX (ESP32-CAM TX → ESP-WROOM)
 #define VISION_BAUD          115200
 
-// ====================== USB-UART (CP2102N → UART0) ==================
+// ====================== USB-UART (CH340G → UART0) ===================
 #define PIN_USB_TX            1     // shared with US4 TRIG; firmware swaps on demand
 #define PIN_USB_RX            3     // shared with US4 ECHO
 
@@ -148,12 +155,16 @@
 //   HIGH only on PWM > 0; idle = HIGH. Acceptable.
 #define PIN_BUZZER            0     // shared with BOOT strapping; PNP-driven
 
-// ====================== OPERATOR PANEL ==============================
-// REMOVED in v2.1 — the resistor-ladder scheme on GPIO 34 had a fundamental
-// impedance-collision conflict with the BTS7960 IS pin (always-active, ~1 kΩ
-// source impedance) that could not be resolved by software multiplexing.
-// All operator input is now via the XPT2046 touchscreen (LVGL indev driver).
-// See docs/known_limitations.md for the v3 fix path (74HC4051 analog mux).
+// ====================== OPERATOR PANEL (5-button R-ladder) ==========
+// Restored in v2.2 alongside the BTS7960 -> L293L motor-driver migration.
+// With the BTS7960 IS pin gone, GPIO 34 is no longer driven by a low-
+// impedance source and can host the resistor-ladder ADC scheme without
+// the impedance collision that motivated the v2.1 removal.
+//
+// Topology: 6 buttons (RAISE / LOWER / HOLD / CLEAR_FAULT / NEXT_SCREEN
+// + 1 spare) + 5 × 1 kΩ ladder resistors + 10 kΩ pull-up to +3V3.
+// hmi/input.cpp scans the ADC at 20 Hz and posts HmiCmd_t events.
+#define PIN_BTN_LADDER       34     // ADC1_CH6, input-only — no internal pull-up
 
 // ====================== E-STOP (hardware + IRQ) =====================
 //  E-stop has TWO paths:
@@ -175,21 +186,20 @@
 #define LEDC_BUZZER_CH        5
 
 // ====================== VOLTAGE SENSE (ADC) =========================
-// REMOVED in v2.1 — GPIO 34/35 are owned by MOTOR_VPROPI and DECK_POSITION
-// respectively. Both peripherals present low source impedance to the ADC pins
-// at all times (the BTS7960 IS output and the deck position pot wiper), so
-// connecting a high-impedance voltage divider (33k/10k or 10k/10k) to the same
-// pin would yield a heavily-attenuated, motor-coupled voltage that does not
-// represent the rail under any condition. Software-only "FSM-state multiplexing"
-// cannot fix this — the impedance collision is present whether we read or not.
+// Still REMOVED in v2.2 — although the BTS7960 IS conflict on GPIO 34 is
+// resolved by the L293L migration, GPIO 34 is now occupied by the
+// operator-panel resistor ladder and GPIO 35 is still owned by the deck-
+// position potentiometer (low source impedance). No ADC pin remains free
+// for a high-impedance rail divider.
 //
-// Rail health is now covered by:
+// Rail health is covered by hardware layers only in v2.2:
 //   • ESP32 brownout detector (3.3 V rail < 2.43 V → reset)
-//   • BTS7960 built-in undervoltage lockout (cuts motor below ~5.5 V)
-//   • LM2596 internal current/thermal limit
+//   • L293L module's internal thermal-shutdown (cuts H-bridge on overheat)
+//   • LM1084 buck-module internal current/thermal limit
 //
 // fault_register.cpp leaves rail_*_volts at -1.0f (sentinel: "not measured").
-// See docs/known_limitations.md for the v3 fix path (74HC4051 analog mux).
+// See docs/known_limitations.md for the v3 fix path (74HC4051 analog mux
+// would free a dedicated ADC pin for rail sense).
 
 // ====================== BACKWARD-COMPAT ALIASES =====================
 // The .cpp files were written with different pin names than pin_config.h
@@ -197,21 +207,13 @@
 // reference in every module. The canonical names are above; these are
 // convenience mappings only.
 //
-// --- motor_driver.cpp (BTS7960 naming) ---
-#define PIN_MOT_RPWM         PIN_MOTOR_IN1       // forward/up
-#define PIN_MOT_LPWM         PIN_MOTOR_IN2       // reverse/down
-#define PIN_MOT_VPROPI       PIN_MOTOR_VPROPI    // current sense
-#define PIN_ENC_A            PIN_DECK_POSITION   // Hall encoder / potentiometer
-#define PIN_LIMIT_TOP        PIN_LIMIT_ANYHIT    // single GPIO for any-limit-hit
-#define PIN_LIMIT_BOTTOM     PIN_LIMIT_ANYHIT    // same GPIO — see NOTE below
-// NOTE: hardware has a single diode-OR "any limit hit" signal on GPIO 39.
-// Both PIN_LIMIT_TOP and PIN_LIMIT_BOTTOM map to the same physical pin.
-// motor_driver.cpp reads both — they will always agree. Top-vs-bottom
-// discrimination uses deck_position_mm (above/below midpoint = top/bottom).
+// --- motor_driver.cpp (L293L naming, drop-in for BTS7960 firmware) ---
+#define PIN_MOT_IN1          PIN_MOTOR_IN1       // forward/up PWM
+#define PIN_MOT_IN2          PIN_MOTOR_IN2       // reverse/down PWM
 
 // --- interlocks.cpp ---
 #define PIN_ESTOP            PIN_ESTOP_IRQ       // e-stop interrupt pin
-#define PIN_RELAY            PIN_MOTOR_RELAY      // safety relay coil
+#define PIN_RELAY            PIN_MOTOR_RELAY      // safety relay coil (via ULN2803)
 #define PIN_SERVO_L          PIN_SERVO_LEFT       // left barrier servo
 #define PIN_SERVO_R          PIN_SERVO_RIGHT      // right barrier servo
 
@@ -221,9 +223,6 @@
 
 // --- traffic_lights.cpp ---
 #define PIN_595_OE           PIN_595_OE_N         // 74HC595 output enable
-
-// (PIN_BTN_LADDER alias removed — operator panel via resistor ladder dropped.
-//  Touchscreen is now the sole HMI input device.)
 
 // ====================== END ========================================
 //

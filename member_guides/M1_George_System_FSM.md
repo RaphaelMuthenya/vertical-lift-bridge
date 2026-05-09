@@ -14,9 +14,9 @@ The brain is an **ESP32-WROOM-32E** running **FreeRTOS**. Eight tasks share one 
 
 | Task | Owner | Pinned to | Job |
 |---|---|---|---|
-| `task_safety` | M5 | Core 0 | Watchdog + relay + barriers, 20 Hz |
+| `task_safety` | M5 | Core 0 | Watchdog + relay + barriers + LED/buzzer/input ticks, 20 Hz |
 | `task_fsm` | **You** | Core 0 | Read events from queue, decide next state |
-| `task_motor` | M2 | Core 0 | PWM the BTS7960, read current sense |
+| `task_motor` | M2 | Core 0 | PWM the L293L, read deck-position pot |
 | `task_sensors` | M3 | Core 0 | Trigger ultrasonics, infer direction |
 | `task_vision` | M3 | Core 0 | Parse JSON from ESP32-CAM over UART2 |
 | `task_counterweight` | M2 | Core 0 | Simulate the water-tank counterweights |
@@ -162,8 +162,8 @@ The file ends with a `v2.1` changelog entry explaining the rail-sense and resist
 ### 2.2 The system enums — `firmware/src/system_types.h`
 This is the contract between modules. Memorise the structure:
 - `SystemState_t` — 9 states (IDLE, ROAD_CLEARING, RAISING, RAISED_HOLD, LOWERING, ROAD_OPENING, FAULT, ESTOP, INIT).
-- `SystemEvent_t` — 17 events. Producers post to `g_event_queue`; you consume from inside `task_fsm`.
-- `FaultFlag_t` — 16 bits (one is deprecated). Set by any module via `SET_FAULT(g_status.fault_flags, FAULT_X)`.
+- `SystemEvent_t` — 17 named values (16 transition-driving events + EVT_NONE). Producers post to `g_event_queue`; you consume from inside `task_fsm`.
+- `FaultFlag_t` — 16 bits, of which two are *reserved-but-never-set* in v2.2 (`FAULT_OVERCURRENT` — L293L has no IS pin; `FAULT_UNDERVOLT_12V` — no rail sense). Set by any module via `SET_FAULT(g_status.fault_flags, FAULT_X)`.
 - `MotorCommand_t` — direction + duty + a request_id you bump every send.
 - `SharedStatus_t` — the BIG struct guarded by `g_status_mutex`. Every field has one writer; many readers.
 
@@ -173,7 +173,7 @@ Walk through `setup()` line by line:
 2. Print boot banner.
 3. Create the mutex and the 4 queues (event, motor_cmd, hmi_cmd, status_mutex).
 4. Init shared state (`g_status.state = STATE_INIT`).
-5. Init each peripheral — order matters: watchdog first (so a dying init still gets caught), then fault register, then interlocks, then motor, then sensors, vision, lights, buzzer, counterweight.
+5. Init each peripheral — order matters: watchdog first (so a dying init still gets caught), then fault register, then interlocks, then motor, then sensors, vision, lights, buzzer, counterweight, and finally `input` (the resistor-ladder operator panel).
 6. Create 7 tasks pinned to Core 0 + 1 task (HMI) on Core 1.
 7. Push EVT_NONE to kick the FSM out of INIT.
 
@@ -409,28 +409,32 @@ Eventually your team will ask "can the bridge do X?". Here is the safe procedure
 
 ---
 
-## Step 8 — Pending work in the FSM (you will do these)
+## Step 8 — Closed FSM gaps (v2.2 — for reference)
 
-The current `fsm_engine.cpp` has known gaps. Address them in this order:
+The previous version of this guide listed three known gaps in
+`fsm_engine.cpp`. All three are closed in v2.2 firmware:
 
-1. **`EVT_HOLD_TIMEOUT` is referenced but never produced.** STATE_RAISED_HOLD will sit forever unless an operator presses LOWER. Wire it:
-   ```cpp
-   // In task_fsm or fsm_engine, when entering STATE_RAISED_HOLD, capture millis().
-   // Each EVT_TICK_100MS while in STATE_RAISED_HOLD, check (millis() - s_entered_ms) > HOLD_TIMEOUT_MS.
-   // If so, post EVT_HOLD_TIMEOUT to g_event_queue.
-   ```
-   Add the check inside `case STATE_RAISED_HOLD:` in `fsm_engine_handle()`:
-   ```cpp
-   case STATE_RAISED_HOLD:
-       if (evt == EVT_TICK_100MS && fsm_engine_state_age_ms() > HOLD_TIMEOUT_MS) {
-           enter_state(STATE_LOWERING);
-       } else if (evt == EVT_HOLD_TIMEOUT || evt == EVT_OPERATOR_LOWER) {
-           enter_state(STATE_LOWERING);
-       }
-       break;
-   ```
-2. **`EVT_OPERATOR_HOLD` is declared but unused.** If the operator presses HOLD on the HMI during RAISING or LOWERING, the bridge should freeze in place. Add handling in those two states.
-3. **`STATE_INIT` to `STATE_IDLE` is currently driven by an `EVT_TICK_100MS` after init_complete returns true.** Verify in your monitor that this happens within 200 ms of boot.
+1. **`EVT_HOLD_TIMEOUT` autonomous timeout — DONE.** The hold timeout is
+   now fired inside `case STATE_RAISED_HOLD` directly: when an
+   `EVT_TICK_100MS` arrives and `fsm_engine_state_age_ms() >= HOLD_TIMEOUT_MS`,
+   the FSM transitions to `STATE_LOWERING`. No separate producer task
+   is needed. The `EVT_HOLD_TIMEOUT` enum entry is preserved for
+   external producers (e.g. a future timer task) but is no longer
+   required for autonomous operation.
+2. **`EVT_OPERATOR_HOLD` mid-travel freeze — DONE.** If the operator
+   presses HOLD during `STATE_RAISING` or `STATE_LOWERING`, the FSM now
+   transitions to `STATE_RAISED_HOLD`, which brakes the motor and
+   yields to either an explicit `EVT_OPERATOR_LOWER` or the
+   `HOLD_TIMEOUT_MS` auto-timeout above.
+3. **`STATE_INIT` → `STATE_IDLE`** is driven by an `EVT_TICK_100MS`
+   when `fsm_guard_init_complete()` returns true. Verify in your
+   monitor that this happens within 200 ms of boot.
+
+Future FSM work (open):
+- Add `STATE_TEST_MODE` for guided self-test (cycle each peripheral
+  with a single operator-screen tap).
+- Wire a **periodic `EVT_TICK_1S`** for slower-cadence guards (e.g.
+  vision link diagnostics) so the 100 ms tick stays uncluttered.
 
 ---
 
@@ -445,7 +449,7 @@ The current `fsm_engine.cpp` has known gaps. Address them in this order:
 
 ### 9.2 Pre-session checklist
 - M2 has flashed `motor_driver.cpp`'s calibration sketch and recorded `CAL_COUNTS_PER_MM`.
-- M2 has wired the BTS7960 module to the ESP32 per `pin_config.h` (GPIO 25, 26, 34, 35).
+- M2 has wired the L293L module to the ESP32 per `pin_config.h` (GPIO 25, 26 for IN1/IN2; GPIO 35 for the deck-position pot wiper).
 - The motor is bolted to the rig (not waving free).
 
 ### 9.3 Procedure
@@ -593,7 +597,7 @@ I twist the button to release and press CLEAR on the HMI."
 Mechanical / firmware:
 - [ ] All 7 source files in `firmware/src/fsm/` and `main.cpp` build clean with `-Wall` (no warnings).
 - [ ] All 9 FSM states reached at least once during dev test.
-- [ ] All 17 events triggered at least once (use the dev harness for the obscure ones).
+- [ ] All 16 transition-driving events triggered at least once (use the dev harness for the obscure ones).
 - [ ] All 5 guards exercised in both true and false paths.
 - [ ] Hardware watchdog never trips on a good rig (uptime > 30 min).
 - [ ] One full IDLE→...→IDLE cycle in < 25 s, no fault flags set at end.
