@@ -459,6 +459,10 @@ void task_hmi(void* arg) {
     ledcSetup(LEDC_CH_BL, 5000, LEDC_RES_BL);
     ledcAttachPin(PIN_TFT_BL, LEDC_CH_BL);
     ledcWrite(LEDC_CH_BL, (1 << LEDC_RES_BL) * 80 / 100);    // 80% default
+    if (xSemaphoreTake(g_status_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        g_status.hmi_brightness = 80;
+        xSemaphoreGive(g_status_mutex);
+    }
 
     // --- TFT init -------------------------------------------------------
     s_tft.init();
@@ -534,15 +538,21 @@ void task_hmi(void* arg) {
                 SystemEvent_t e = EVT_FAULT_CLEARED;
                 xQueueSend(g_event_queue, &e, 0);
             } break;
-            case HMI_CMD_BRIGHTNESS_UP: {
-                static uint8_t pct = 80;
-                if (pct < 100) pct += 10;
-                ledcWrite(LEDC_CH_BL, (1 << LEDC_RES_BL) * pct / 100);
-            } break;
+            case HMI_CMD_BRIGHTNESS_UP:
             case HMI_CMD_BRIGHTNESS_DOWN: {
-                static uint8_t pct = 80;
-                if (pct > 10) pct -= 10;
-                ledcWrite(LEDC_CH_BL, (1 << LEDC_RES_BL) * pct / 100);
+                // Shared state — must be a single static so UP and DOWN
+                // operate on the same level (each had its own static
+                // before, which decoupled them and made the dashboard's
+                // brightness behave nonsensically when the user
+                // interleaved presses).
+                static uint8_t bl_pct = 80;
+                if (cmd == HMI_CMD_BRIGHTNESS_UP   && bl_pct < 100) bl_pct += 10;
+                if (cmd == HMI_CMD_BRIGHTNESS_DOWN && bl_pct >  10) bl_pct -= 10;
+                ledcWrite(LEDC_CH_BL, (1 << LEDC_RES_BL) * bl_pct / 100);
+                if (xSemaphoreTake(g_status_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    g_status.hmi_brightness = bl_pct;
+                    xSemaphoreGive(g_status_mutex);
+                }
             } break;
             default: break;
             }

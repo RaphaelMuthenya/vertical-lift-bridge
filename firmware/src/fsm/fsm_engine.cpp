@@ -15,6 +15,11 @@
 static SystemState_t s_state         = STATE_INIT;
 static SystemState_t s_prev_state    = STATE_INIT;
 static uint32_t      s_entered_ms    = 0;
+// Hoisted out of the STATE_ROAD_CLEARING case so it can be reset on every
+// fresh entry. Without that reset, a CW_READY received during one cycle
+// could carry over an ESTOP/FAULT round-trip and short-circuit the next
+// cycle's counterweight wait.
+static bool          s_cw_ok         = false;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,6 +34,12 @@ static void enter_state(SystemState_t new_state) {
     s_prev_state = s_state;
     s_state      = new_state;
     s_entered_ms = millis();
+
+    // Per-state-entry resets (avoid stale carry-over across FAULT / ESTOP
+    // round-trips). If a state grows new transient flags, clear them here.
+    if (new_state == STATE_ROAD_CLEARING) {
+        s_cw_ok = false;
+    }
 
     // Mirror to shared status
     if (xSemaphoreTake(g_status_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -90,17 +101,16 @@ void fsm_engine_handle(SystemEvent_t evt) {
         }
         break;
 
-    case STATE_ROAD_CLEARING: {
-        // Need both barriers closed AND counterweights balanced before raising
-        static bool s_cw_ok = false;
+    case STATE_ROAD_CLEARING:
+        // Need both barriers closed AND counterweights balanced before raising.
+        // s_cw_ok is the file-static reset by enter_state() above.
         if (evt == EVT_CW_READY) s_cw_ok = true;
         if (evt == EVT_BARRIER_CLOSED || evt == EVT_CW_READY || evt == EVT_TICK_100MS) {
             if (fsm_guard_road_clear() && s_cw_ok) {
-                s_cw_ok = false;  // Reset for next cycle
-                enter_state(STATE_RAISING);
+                enter_state(STATE_RAISING);   // s_cw_ok cleared on next ROAD_CLEARING entry
             }
         }
-    } break;
+        break;
 
     case STATE_RAISING:
         if (evt == EVT_TOP_LIMIT_HIT) {
