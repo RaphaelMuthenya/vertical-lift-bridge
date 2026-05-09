@@ -46,7 +46,7 @@
 
 ## Migration impact
 - All 4-tower CAD parts deprecated; 13 new OpenSCAD parts created.
-- Motor calibration constant `CAL_COUNTS_PER_MM` now drum-circumference-based (≈ 42 counts/mm at Ø30 mm).
+- Motor calibration constant `CAL_COUNTS_PER_MM` now expresses ADC-counts per mm of deck travel (the 10 kΩ pot wiper drives `PIN_DECK_POSITION` on GPIO 35). Worked-example default in `motor_driver.cpp` is 14; M2 measures the per-rig value with the calibration sketch in member guide §7.
 - PCB schematic (v2.2 KiCad 10 rebuild): adds J7 4-pin JST-XH for ESP32-CAM; IR analog inputs deleted; BTS7960 connector replaced with L293L 6-pin logic header + 4-pin screw-terminal block.
 - BOM: removed 4× lead screw, 4× pulley, 2× belt; added 2× counterweight, ESP32-CAM, 2× MGN12 rail, L293L module, dedicated CAM 5 V buck, 2× ULN2803.
 

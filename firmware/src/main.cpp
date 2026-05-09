@@ -190,7 +190,9 @@ static void task_fsm(void* arg) {
 }
 
 // ===========================================================================
-// task_motor — closed-loop on deck position; current monitoring.
+// task_motor — closed-loop on deck position via potentiometer; stall watch.
+// (No current monitoring in v2.2 — L293L module has no IS pin; cf. L6 in
+//  docs/known_limitations.md.)
 // ===========================================================================
 static void task_motor(void* arg) {
     MotorCommand_t cmd;
@@ -198,7 +200,7 @@ static void task_motor(void* arg) {
         if (xQueueReceive(g_motor_cmd_queue, &cmd, pdMS_TO_TICKS(20)) == pdTRUE) {
             motor_driver_apply(cmd);
         }
-        motor_driver_tick();   // ADC read, position update, stall check
+        motor_driver_tick();   // pot ADC read, position update, stall check
         safety_watchdog_kick_motor();
     }
 }
@@ -264,7 +266,8 @@ static void task_counterweight(void* arg) {
 }
 
 // ===========================================================================
-// task_telemetry — uptime, CPU load, voltage rails. 1 Hz.
+// task_telemetry — uptime + CPU load. 1 Hz.
+// (Voltage rails are not measured in v2.2 — see L1 in known_limitations.md.)
 // ===========================================================================
 static void task_telemetry(void* arg) {
     TickType_t last = xTaskGetTickCount();

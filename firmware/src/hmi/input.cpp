@@ -44,7 +44,12 @@
 #define BTN_CLEAR_FAULT   4
 #define BTN_NEXT_SCREEN   5
 
-#define BAND_TOL          120     // ±counts around the centre voltage
+// ±tolerance around each band centre. Band centres are ~200 ADC counts
+// apart so anything wider than ±100 risks two adjacent buttons matching
+// the same reading; 80 leaves a comfortable 40-count dead-band between
+// neighbours. Matches the dimensioning in docs/05_electronics_design.md
+// §5.5a — change both together if you re-tune.
+#define BAND_TOL          80
 #define DEBOUNCE_SAMPLES  3       // stable readings before commit
 
 static uint8_t band_to_btn(uint16_t adc) {

@@ -48,6 +48,7 @@
 #include "input.h"
 #include "../pin_config.h"
 #include "../system_types.h"
+#include "../safety/fault_register.h"   // for fault_register_clear_all()
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
@@ -521,6 +522,15 @@ void task_hmi(void* arg) {
                 xQueueSend(g_event_queue, &e, 0);
             } break;
             case HMI_CMD_CLEAR_FAULT: {
+                // Clear the latched flag bitmask FIRST, then post the
+                // event. Without the clear, fault_register_evaluate()
+                // would re-emit EVT_FAULT_RAISED on the next tick and
+                // the FSM would bounce straight back to STATE_FAULT.
+                // If the underlying condition is still active (e.g.
+                // ongoing stall), faults will re-latch within ~50 ms —
+                // which is the right behaviour: the operator should
+                // see the fault is unrecoverable.
+                fault_register_clear_all();
                 SystemEvent_t e = EVT_FAULT_CLEARED;
                 xQueueSend(g_event_queue, &e, 0);
             } break;

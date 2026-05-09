@@ -4,6 +4,18 @@
 //   bit0 ROAD_R, bit1 ROAD_Y, bit2 ROAD_G,
 //   bit3 MARINE_R, bit4 MARINE_Y, bit5 MARINE_G
 // Owner: M4 Abigael
+//
+// Pin-sharing note (v2.2): three of the four 74HC595 control lines share
+// physical GPIOs with HC-SR04 ECHO inputs (see pin_config.h §LIMIT
+// SWITCHES and §TRAFFIC LIGHTS). To stop shift_out from leaving those
+// pins permanently driven (which would silently break ultrasonic reads
+// on US1, US2, US3), shift_out reconfigures DATA/CLOCK/LATCH to OUTPUT
+// only for the duration of the byte transfer (~100 µs) and restores
+// them to INPUT_PULLUP afterwards. PIN_595_OE_N stays a permanent
+// OUTPUT (driven LOW = chain enabled) — the OE pin must hold its level
+// or the visible LEDs would dim/extinguish during the transfer; that
+// constraint means GPIO 21 cannot be shared, so US2_ECHO (also GPIO 21)
+// is permanently disabled in v2.2 (cf. known_limitations.md L8).
 // ============================================================================
 #include "traffic_lights.h"
 #include "../pin_config.h"
@@ -17,9 +29,25 @@ static TrafficLightState_t s_marine = TL_OFF;
 static uint8_t              s_blink_phase = 0;
 
 static void shift_out(uint8_t byte) {
+    // Briefly steal the DATA and CLOCK lines from the HC-SR04 driver.
+    // INPUT_PULLUP is the "release" mode — US1 (CLOCK pad) and US3
+    // (DATA pad) can read their ECHO lines between shifts.
+    //
+    // LATCH (GPIO 19) is shared with US2_TRIG, which is already an
+    // OUTPUT — both drivers want the same direction, so we leave LATCH
+    // permanently OUTPUT and just write the rising edge here.
+    pinMode(PIN_595_DATA,  OUTPUT);
+    pinMode(PIN_595_CLOCK, OUTPUT);
+
     digitalWrite(PIN_595_LATCH, LOW);
     shiftOut(PIN_595_DATA, PIN_595_CLOCK, MSBFIRST, byte);
     digitalWrite(PIN_595_LATCH, HIGH);
+
+    // Hand DATA and CLOCK back. The 74HC595 latches on the LATCH rising
+    // edge above, so subsequent INPUT_PULLUP on these control lines does
+    // NOT change the LED state.
+    pinMode(PIN_595_DATA,  INPUT_PULLUP);
+    pinMode(PIN_595_CLOCK, INPUT_PULLUP);
 }
 
 static uint8_t state_to_bits(TrafficLightState_t s, uint8_t base_shift, bool blink_on) {
@@ -36,12 +64,20 @@ static uint8_t state_to_bits(TrafficLightState_t s, uint8_t base_shift, bool bli
 }
 
 void traffic_lights_init(void) {
-    pinMode(PIN_595_DATA,  OUTPUT);
-    pinMode(PIN_595_CLOCK, OUTPUT);
+    // OE stays a permanent OUTPUT (driven LOW = chain enabled).
+    // LATCH (shared with US2_TRIG) is already configured OUTPUT by
+    // sensors_ultrasonic_init — both drivers want OUTPUT, so we just
+    // assert the idle level here.
+    // DATA and CLOCK rest as INPUT_PULLUP so the HC-SR04 driver can use
+    // the same physical GPIOs for ECHO reads between shifts (cf. file
+    // header).
+    pinMode(PIN_595_OE,   OUTPUT);
+    digitalWrite(PIN_595_OE, LOW);
     pinMode(PIN_595_LATCH, OUTPUT);
-    pinMode(PIN_595_OE,    OUTPUT);
-    digitalWrite(PIN_595_OE, LOW);  // Output enable
-    shift_out(0);
+    digitalWrite(PIN_595_LATCH, HIGH);    // idle high — released
+    pinMode(PIN_595_DATA,  INPUT_PULLUP);
+    pinMode(PIN_595_CLOCK, INPUT_PULLUP);
+    shift_out(0);                          // clear all LEDs at boot
     Serial.println("[lights] init OK");
 }
 

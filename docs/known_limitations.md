@@ -166,11 +166,79 @@ fed through the 74HC4051 from L1.
 
 ---
 
+## L7 — Barrier-stuck cannot be detected in v2.2
+
+### Symptom
+`FAULT_BARRIER_TIMEOUT` is reserved-but-never-set. The firmware reports
+the barriers reach their target after a fixed 800 ms time estimate,
+regardless of whether the servo physically moved.
+
+### Why
+SG90 hobby servos provide no position-feedback signal. The firmware's
+`interlocks_evaluate()` therefore uses an open-loop time estimator
+(`barrier_age > BARRIER_REACHED_MS = 800 ms` ⇒ "done"). A jammed
+barrier still draws PWM pulses but does not move; the firmware cannot
+tell the difference.
+
+### v2.2 mitigation
+Operator visual inspection during the demo. The HMI MAIN screen
+should display the requested barrier angle and the operator can
+confirm the physical barrier matches.
+
+### v3 fix path
+Add a KW11-3Z microswitch under each barrier arm wired through the
+diode-OR network on `PIN_LIMIT_ANYHIT` (or a dedicated GPIO once the
+74HC4051 frees pins per L1). Update `interlocks_evaluate()` to set
+`barrier_done` from the switch reading, then the existing
+`BARRIER_TIMEOUT_MS` watchdog becomes effective.
+
+---
+
+## L8 — Two HC-SR04 sensors degraded by 74HC595 + servo pin-sharing
+
+### Symptom
+Of the four HC-SR04 modules:
+- **US1, US3** — ECHO reads work in v2.2 thanks to the time-multiplex
+  fix in `traffic_lights.cpp::shift_out()` (DATA/CLOCK toggle to
+  `INPUT_PULLUP` between shifts so US1_ECHO on GPIO 18 and US3_ECHO on
+  GPIO 23 are readable most of the time).
+- **US2** — ECHO permanently dead. GPIO 21 hosts the 74HC595 OE pin
+  which must stay a permanent `OUTPUT` (driven LOW = LED chain enabled).
+  Any shared `INPUT_PULLUP` toggling here would extinguish the LEDs.
+- **US3 TRIG** (GPIO 22) — partially compromised because GPIO 22 is
+  also the LEDC PWM output for `PIN_SERVO_RIGHT`. Once `interlocks_init`
+  attaches the servo via `s_servo_r.attach()`, the GPIO matrix routes
+  the LEDC signal to the pad and direct `digitalWrite` from
+  `sensors_ultrasonic_tick()` no longer reaches the SR04. Trigger
+  pulses still fire when the servo channel is at idle (0% duty) which
+  matches the design intent ("ultrasonics aren't time-critical during
+  barrier sweep") but is fragile.
+
+### v2.2 mitigation
+- Vehicle detection still works through vision (independent UART2
+  channel) and through US1 + US4 (subject to L4 USB note).
+- Direction inference is degraded: the 4-sensor design assumes both
+  pairs read; in v2.2 only the upstream pair's US1 and the downstream
+  pair's US4 deliver useful echoes. The FSM still fires
+  `EVT_VEHICLE_DETECTED` from the OR of any blocked beam, so vessel
+  presence detection works; only the direction-of-travel inference is
+  degraded.
+
+### v3 fix path
+Move the 74HC595 control lines off the ultrasonic pins entirely. The
+cleanest approach is to pair the 74HC595 with the v3-PCB 74HC4051
+analog mux suggested in L1 — both can sit on a small dedicated I/O
+sub-bus driven from GPIO pins freed by the mux.
+
+---
+
 ## Summary for the lecturer demo
 
 The bridge meets all functional requirements with the v2.2 firmware:
-9-state FSM, 4 ultrasonic sensors with direction inference, ESP32-CAM
-vision, L293L motor control with closed-loop position from the deck
+9-state FSM, ultrasonic vessel detection (4 sensors fitted; per L8 only
+2 currently deliver echoes — sufficient for presence detection but not
+within-pair direction), ESP32-CAM vision, L293L motor control with
+closed-loop position from the deck
 pot, simulated dynamic counterweights on the HMI, 16-flag fault
 register with edge-triggered FSM events, full safety chain (E-stop
 relay through ULN2803, watchdog, barrier interlocks), and
@@ -184,6 +252,9 @@ claim it does:
   position-based discrimination is implemented; it just needs the deck
   pot to be calibrated)
 - Motor current measurement / `FAULT_OVERCURRENT` (L6)
+- Servo barrier stall detection / `FAULT_BARRIER_TIMEOUT` (L7)
+- Within-pair direction inference for vessels (L8 — US2 ECHO dead, US1
+  delivers presence only)
 
-The fix for L1, L2, L6 (and free a path for L4) is a single 74HC4051 IC
-on the v3 board.
+The fix for L1, L2, L6, L8 (and free a path for L4) is a single 74HC4051
+IC on the v3 board. L7 needs barrier-arm microswitches.

@@ -34,10 +34,13 @@
 #define LEDC_FREQ_HZ    20000      // above audible
 
 // ---------------------------------------------------------------------------
-// Calibration — measured by raising deck 100mm and counting ADC steps.
+// Calibration — ADC counts per millimetre of deck travel.
+// Measured by the calibration sketch in member_guides/M2 §7. Auto-zero
+// happens whenever the bottom limit switch fires; pos_mm is then derived
+// as (adc_now - s_adc_zero) / CAL_COUNTS_PER_MM.
 // PLACEHOLDER: M2 Eugene must re-measure on hardware and update.
 // ---------------------------------------------------------------------------
-#define CAL_COUNTS_PER_MM      42      // From bench measurement
+#define CAL_COUNTS_PER_MM      14      // From bench measurement (M2 §7)
 
 // ---------------------------------------------------------------------------
 // State
@@ -45,6 +48,9 @@
 static MotorDirection_t s_dir          = MOTOR_STOP;
 static uint16_t         s_duty         = 0;
 static uint32_t         s_last_move_ms = 0;
+// ADC reading captured at the last bottom-limit hit. Until the first
+// bottom-limit event, we use 0 (assumes deck starts at the bottom).
+static int32_t          s_adc_zero     = 0;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -104,14 +110,17 @@ void motor_driver_apply(const MotorCommand_t& cmd) {
 
 void motor_driver_tick(void) {
     // Position from the deck-position pot wiper (no Hall encoder fitted).
-    // The ADC is also available because the L293L module presents no
-    // current-sense source on this rail (cf. L1 in known_limitations.md).
     uint32_t adc_sum = 0;
     for (int i = 0; i < 4; i++) adc_sum += analogRead(PIN_DECK_POSITION);
     int32_t adc_avg = adc_sum >> 2;
-    // Map 0..4095 ADC counts to 0..DECK_HEIGHT_MAX_MM. Adjust the divisor
-    // after running the calibration sketch in member_guides/M2.
-    int16_t pos_mm = (int16_t)((adc_avg * DECK_HEIGHT_MAX_MM) / 4095);
+    // Convert ADC delta from the bottom-limit reference to millimetres.
+    // pos32_raw is unclamped — used by the FAULT_POS_OUT_OF_RANGE check
+    // below. pos_mm is clamped for downstream consumers.
+    int32_t pos32_raw = (adc_avg - s_adc_zero) / CAL_COUNTS_PER_MM;
+    int32_t pos32     = pos32_raw;
+    if (pos32 < 0)                       pos32 = 0;
+    if (pos32 > DECK_HEIGHT_MAX_MM + 20) pos32 = DECK_HEIGHT_MAX_MM + 20;
+    int16_t pos_mm = (int16_t)pos32;
 
     // Single diode-OR'd limit signal on GPIO 39 (see known_limitations L2).
     // Discriminate top vs bottom by deck position: above midpoint -> top,
@@ -124,8 +133,15 @@ void motor_driver_tick(void) {
         else                                    bot_hit = true;
     }
 
-    // Auto-zero at bottom (positionally inferred)
-    if (bot_hit) pos_mm = 0;
+    // Auto-zero on bottom-limit hit: capture the ADC reading at this
+    // moment as the "deck = 0 mm" reference so subsequent ticks start
+    // measuring from the true mechanical bottom. This is what makes
+    // CAL_COUNTS_PER_MM a per-mm calibration rather than a full-range
+    // calibration, and it self-corrects pot drift over the project's life.
+    if (bot_hit) {
+        s_adc_zero = adc_avg;
+        pos_mm     = 0;
+    }
 
     // Stall detection — derived from the position estimate, not encoder.
     bool stalled = false;
@@ -143,6 +159,12 @@ void motor_driver_tick(void) {
         s_last_pos_for_stall = pos_mm;
     }
 
+    // Out-of-range check: if pos_mm reads negative or unreasonably above
+    // DECK_HEIGHT_MAX_MM, the pot wiper is probably disconnected or the
+    // mechanical coupling has broken. Raise FAULT_POS_OUT_OF_RANGE so the
+    // FSM stops trusting the position estimate.
+    bool pos_bad = (pos32_raw < -10) || (pos32_raw > DECK_HEIGHT_MAX_MM + 15);
+
     // Push to shared status. motor_current_ma stays at 0 (no IS pin on
     // L293L); FAULT_OVERCURRENT is therefore never raised by firmware in
     // v2.2 — the L293L's internal thermal shutdown is the safety net.
@@ -152,7 +174,8 @@ void motor_driver_tick(void) {
         g_status.motor_pwm_duty   = s_duty;
         g_status.top_limit_hit    = top_hit;
         g_status.bottom_limit_hit = bot_hit;
-        if (stalled) SET_FAULT(g_status.fault_flags, FAULT_STALL);
+        if (stalled)  SET_FAULT(g_status.fault_flags, FAULT_STALL);
+        if (pos_bad)  SET_FAULT(g_status.fault_flags, FAULT_POS_OUT_OF_RANGE);
         // FAULT_LIMIT_BOTH is impossible with the diode-OR scheme (only
         // one logical bit can be true at a time after the discriminator
         // above) — left in the enum for v3 PCB which wires both limits.

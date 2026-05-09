@@ -163,7 +163,7 @@ The file ends with a `v2.1` changelog entry explaining the rail-sense and resist
 This is the contract between modules. Memorise the structure:
 - `SystemState_t` — 9 states (IDLE, ROAD_CLEARING, RAISING, RAISED_HOLD, LOWERING, ROAD_OPENING, FAULT, ESTOP, INIT).
 - `SystemEvent_t` — 17 named values (16 transition-driving events + EVT_NONE). Producers post to `g_event_queue`; you consume from inside `task_fsm`.
-- `FaultFlag_t` — 16 bits, of which two are *reserved-but-never-set* in v2.2 (`FAULT_OVERCURRENT` — L293L has no IS pin; `FAULT_UNDERVOLT_12V` — no rail sense). Set by any module via `SET_FAULT(g_status.fault_flags, FAULT_X)`.
+- `FaultFlag_t` — 16 bits, of which three are *reserved-but-never-set* in v2.2: `FAULT_OVERCURRENT` (L293L has no IS pin — see L6), `FAULT_UNDERVOLT_12V` (no rail sense — L1), and `FAULT_BARRIER_TIMEOUT` (open-loop SG90 has no feedback — L7). The remaining 13 flags are set by their owning module via `SET_FAULT(g_status.fault_flags, FAULT_X)`.
 - `MotorCommand_t` — direction + duty + a request_id you bump every send.
 - `SharedStatus_t` — the BIG struct guarded by `g_status_mutex`. Every field has one writer; many readers.
 

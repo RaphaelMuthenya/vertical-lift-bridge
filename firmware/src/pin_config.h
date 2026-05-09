@@ -63,10 +63,11 @@
 //       The agreed allocation keeps UART2 for vision; live with the GPIO1/3 trade-off.
 
 // ====================== LIMIT SWITCHES (KW11-3Z ×4 — BOM line 11) ===
-//  Wired through 74HC595? NO — we have spare GPIOs and want fast IRQs.
-//  All 8 switches wired in two parallel 4-input groups using diodes,
-//  giving us per-tower TOP and BOTTOM signals on 4 GPIOs.
-//  (Diode-OR matrix in ConnectorsSafety.kicad_sch.)
+//  4 switches total: top + bottom of each tower. Diode-OR'd into one
+//  "any-limit-hit" signal on PIN_LIMIT_ANYHIT (GPIO 39); firmware
+//  discriminates top vs bottom from the deck-position pot reading
+//  (see motor_driver.cpp). Diode-OR matrix lives in
+//  ConnectorsSafety.kicad_sch.
 #define PIN_LIMIT_LEFT_TOP    16    // ↑ also UART2 RX in vision build
 #define PIN_LIMIT_LEFT_BOT    17    // ↑ also UART2 TX in vision build
 // CONFLICT — RESOLUTION: limit switches are level-driven and active-low,
@@ -231,4 +232,6 @@
 // of #defines (those NOT followed by an #undef in the same block) are the
 // active assignments. M1 has lint-checked these on a spreadsheet.
 //
-// A clean printable summary is in /docs/pin_allocation_v2.md
+// A clean printable summary lives in this file's `#define` lines that are
+// NOT followed by an `#undef` — read them top to bottom for the final pin
+// allocation.

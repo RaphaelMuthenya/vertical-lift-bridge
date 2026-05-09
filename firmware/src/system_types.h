@@ -66,7 +66,7 @@ typedef enum : uint32_t {
     FAULT_ULTRASONIC_FAIL   = 1u << 6,   // All four ultrasonics timed out
     FAULT_TFT_INIT_FAIL     = 1u << 7,   // Display did not init
     FAULT_TOUCH_INIT_FAIL   = 1u << 8,   // XPT2046 did not init
-    FAULT_BARRIER_TIMEOUT   = 1u << 9,   // Servo barrier did not reach target
+    FAULT_BARRIER_TIMEOUT   = 1u << 9,   // RESERVED v2.2 — open-loop SG90 has no feedback (see known_limitations.md L7). Wired in v3 with arm microswitches.
     FAULT_RELAY_FEEDBACK    = 1u << 10,  // Relay coil energised but contact open
     FAULT_UNDERVOLT_12V     = 1u << 11,  // DEPRECATED v2.1 — rail monitoring removed (see known_limitations.md). Bit reserved; never set.
     FAULT_OVERTEMP          = 1u << 12,  // Optional NTC > 60°C
@@ -160,7 +160,8 @@ typedef struct {
 // ----------------------------------------------------------------------------
 // SharedStatus — single struct guarded by a mutex.
 // All tasks read/write through xSemaphoreTake(g_status_mutex, ...).
-// Producers: motor (position, current), sensors (ultrasonic), vision, FSM.
+// Producers: motor (position; current is always 0 in v2.2), sensors
+//            (ultrasonic), vision, counterweight (sim), interlocks, FSM.
 // Consumer: HMI (display + telemetry), safety (fault evaluation).
 // ----------------------------------------------------------------------------
 typedef struct {

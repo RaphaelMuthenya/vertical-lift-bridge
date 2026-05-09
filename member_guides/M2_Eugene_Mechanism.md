@@ -497,7 +497,7 @@ Use the failure cookbook in Step 12.
 |---|---|---|
 | 1 | Wave 1 + 2 prints done. Towers + base assembled. | Photo of standing rig in `docs/build_log/` |
 | 2 | Wave 3 + 4 prints done. Cable + counterweight system functional. Manual lift smooth. | M1 confirms manual lift smooth |
-| 3 | Motor + drum installed. L293L module wired. `CAL_COUNTS_PER_MM` measured (≠ 42). | `docs/cal_log.md` committed |
+| 3 | Motor + drum installed. L293L module wired. `CAL_COUNTS_PER_MM` measured on your hardware. | `docs/cal_log.md` committed (your value, not the worked-example 14) |
 | 4 | Limit switches wired with diode-OR + pull-up. Top/bottom events fire correctly. | M1 confirms FSM cycles |
 | 5 | Full closed-loop: serial `r` → raises to top, `l` → lowers to bottom. | M1 sign-off |
 | 6 | Stall fault test passes (overcurrent reserved-but-unset in v2.2 — L293L has no IS) | M5 sign-off |
@@ -534,7 +534,7 @@ Mechanical:
 - [ ] Spare cable + spare counterweight box on hand for demo day.
 
 Firmware:
-- [ ] `CAL_COUNTS_PER_MM` measured on hardware (not the placeholder 42). Logged in `docs/cal_log.md`.
+- [ ] `CAL_COUNTS_PER_MM` measured on hardware (the source default of 14 is a worked-example placeholder — your pot mounting will give a different value). Logged in `docs/cal_log.md`.
 - [ ] PWM duties tuned: raise = 6–8 s, lower = 5–7 s.
 - [ ] Stall fault triggers within 2 s when motor blocked.
 - [ ] (v3) Overcurrent fault triggers when bridge held against top limit. *Skipped in v2.2 — the L293L module has no current-sense pin.*

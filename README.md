@@ -56,7 +56,7 @@ Every member has a dedicated walkthrough in [`member_guides/`](./member_guides/)
 The system runs a complete bridge-opening cycle without human input. In plain English:
 
 1. The system sits in **idle state** with the bridge deck down, traffic lights green for road traffic, red for marine traffic.
-2. **Vehicle detection.** When a model vehicle approaches, the ESP32-CAM running frame-difference motion detection raises a vehicle flag over a UART link, and dual HC-SR04 ultrasonic sensors confirm direction (approaching vs. leaving) using beam-arrival timing on a five-sample history ring.
+2. **Vehicle detection.** When a model vehicle approaches, the ESP32-CAM running frame-difference motion detection raises a vehicle flag over a UART link, and four HC-SR04 ultrasonic sensors (two pairs spaced 3 cm apart) confirm direction (approaching vs. leaving) using beam-arrival timing on a five-sample history ring.
 3. **Stop the road.** Traffic lights cycle green → amber → red. Servo barriers swing down. A buzzer chirps twice as a courtesy alert.
 4. **Balance counterweights.** A simulated dynamic counterweight system models two water tanks being filled/drained by pumps and valves to balance the deck mass. The firmware simulates water levels, pump status, and drain valve state — all visualised in real time on the TFT dashboard. The physical counterweights remain static (lead-filled boxes); the simulation runs in parallel for demonstration purposes. The FSM waits for the simulated counterweights to report "balanced" before proceeding.
 5. **Verify clearance.** The system confirms both barriers reached their down position, no vehicle remains in the bridge zone, and the simulated counterweights are balanced before raising.
@@ -277,6 +277,7 @@ vertical-lift-bridge/
 | Understand the bridge mechanism in depth | [`docs/02_revised_proposal.md`](./docs/02_revised_proposal.md) |
 | See the electronics spec | [`docs/05_electronics_design.md`](./docs/05_electronics_design.md) |
 | Understand why the design changed | [`docs/audit_report.md`](./docs/audit_report.md) |
+| Know what v2.2 deliberately leaves un-fixed | [`docs/known_limitations.md`](./docs/known_limitations.md) |
 | Print the parts | [`cad/README_cad.md`](./cad/README_cad.md) |
 | Procure components | [`bom/VLB_Group7_BOM.xlsx`](./bom/VLB_Group7_BOM.xlsx) |
 | Know which GPIO does what | [`firmware/src/pin_config.h`](./firmware/src/pin_config.h) |

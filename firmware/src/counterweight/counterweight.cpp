@@ -100,6 +100,13 @@ void counterweight_set_target(float left_ml, float right_ml) {
     }
 
     s_cw.balanced = false;
+    // Arm the rising-edge detector in counterweight_tick(). Without this,
+    // a "set target" call with target == current level (e.g. the FSM's
+    // entry to STATE_ROAD_CLEARING with the default 120 ml on a freshly
+    // booted system) would leave s_was_balanced = true from init, and
+    // the immediately-true balance state would never produce an edge —
+    // the FSM would stall waiting for EVT_CW_READY.
+    s_was_balanced = false;
 }
 
 void counterweight_tick(void) {

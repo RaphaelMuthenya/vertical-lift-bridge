@@ -1271,7 +1271,7 @@ Bench-test the layered protection:
 - Open-loop barrier timing — assumes 1 s reach time. SG90 ≈ 0.6 s for 90°.
 
 ### 14.4 Things you tune on real hardware
-- ADC current calibration — `ADC_TO_MA_NUMERATOR` / `ADC_TO_MA_DENOMINATOR` in `motor_driver.cpp`. Measure motor current with a multimeter under known load (e.g. 1 A draw), compare to firmware's reported `motor_current_ma`, scale.
+- ADC current calibration — *skipped in v2.2*. `motor_current_ma` is hard-wired to 0 because the L293L module has no current-sense pin (see L6). Measure motor current with a multimeter externally during bring-up to verify the rail design (≤ 1.5 A under counterweight balance, ≤ 2 A peak under brief stall).
 - Relay flyback diode polarity — orientation matters; cathode goes to +5V side of coil.
 - Barrier servo angles — `BARRIER_DOWN_ANGLE = 0`, `BARRIER_UP_ANGLE = 90` in `system_types.h`. Adjust if your physical barriers don't reach the right positions.
 

@@ -90,12 +90,12 @@ void interlocks_evaluate(void) {
     // Barrier reach detection — open-loop time estimate.
     //   "reached"  : SG90 needs about 0.6 s for 90°. We use 800 ms to leave
     //                margin for low-voltage operation and worn servos.
-    //   "timeout"  : if the deadline at BARRIER_TIMEOUT_MS passes and we
-    //                still don't believe the barrier is in position, raise
-    //                FAULT_BARRIER_TIMEOUT. With reached < timeout the
-    //                fault path is reachable on a stuck servo (an SG90
-    //                with the gearbox jammed will not stop drawing
-    //                command pulses but will not move either).
+    //
+    // Note (v2.2): without a feedback channel from the servo we cannot
+    // distinguish a physically-jammed barrier from a successful move.
+    // FAULT_BARRIER_TIMEOUT is therefore reserved-but-never-set in
+    // v2.2; the v3 board can wire a microswitch under each barrier arm
+    // for true feedback. The flag is left in the enum for that future.
     const uint32_t BARRIER_REACHED_MS = 800;
     uint32_t barrier_age = millis() - s_barrier_started_ms;
     bool barrier_done = (barrier_age > BARRIER_REACHED_MS);
@@ -106,14 +106,9 @@ void interlocks_evaluate(void) {
         g_status.barrier_right_angle          = s_target_angle;
         g_status.barrier_left_target_reached  = barrier_done;
         g_status.barrier_right_target_reached = barrier_done;
-        // BARRIER_TIMEOUT_MS guards against a *physically* stuck arm. The
-        // open-loop SG90 has no feedback channel, so this is the best we
-        // can do without limit microswitches on the barrier itself.
-        if (!barrier_done && barrier_age > BARRIER_TIMEOUT_MS) {
-            SET_FAULT(g_status.fault_flags, FAULT_BARRIER_TIMEOUT);
-        }
         xSemaphoreGive(g_status_mutex);
     }
+    (void)BARRIER_TIMEOUT_MS;   // referenced in known_limitations.md (L7)
 
     // Emit FSM events on the rising edge of barrier_done so the FSM can
     // leave STATE_ROAD_CLEARING / STATE_ROAD_OPENING without waiting for
