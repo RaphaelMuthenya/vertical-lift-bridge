@@ -226,12 +226,13 @@ The reason actions are split from the engine is so you can read **what the bridg
    [wdt] init OK (5s hw, 1.5s sw)
    [fault] init OK (rail monitoring disabled — see known_limitations.md)
    [ilk] init OK (relay off until first OK eval)
-   [motor] init OK
+   [motor] init OK (L293L module, no current-sense, adc_zero=NNN)
    [us] init OK (4 sensors, upstream + downstream)
    [vision] UART2 init @ 115200
    [lights] init OK
    [buz] init OK
    [cw] init OK (simulated dynamic counterweight)
+   [input] init OK (5-button R-ladder on GPIO 34)
    [boot] Peripherals OK
    [boot] Tasks created — entering scheduler
    [hmi] task start (Core 1)
