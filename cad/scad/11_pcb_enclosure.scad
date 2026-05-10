@@ -50,7 +50,7 @@ module pcb_enclosure_lid() {
     // Project label inset (silkscreen substitute)
     translate([ENC_OUTER_X/2 - 25, ENC_OUTER_Y/2 - 4, ENC_LID_H - 0.6])
         linear_extrude(0.7)
-            text("VLB-G5", size=6, font="Liberation Sans:style=Bold");
+            text("VLB-G7", size=6, font="Liberation Sans:style=Bold");
 }
 
 pcb_enclosure_base();

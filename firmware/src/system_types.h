@@ -220,8 +220,8 @@ typedef struct {
 // Tunables — adjusted at integration time. Keep defaults conservative.
 // ----------------------------------------------------------------------------
 #define DECK_HEIGHT_MAX_MM          175      // Mechanical full-up position
-#define DECK_HEIGHT_MIN_MM          0
-#define DECK_HEIGHT_TOLERANCE_MM    3        // ±3 mm for "limit reached"
+#define DECK_HEIGHT_MIN_MM          0        // Reserved — not yet used by code
+#define DECK_HEIGHT_TOLERANCE_MM    3        // Reserved — ±3 mm for "limit reached" (v3 will use this when limit-discrimination moves off the diode-OR scheme)
 #define MOTOR_PWM_MAX               8191     // 13-bit LEDC
 #define MOTOR_PWM_RAISE_DEFAULT     5500     // ~67% duty
 #define MOTOR_PWM_LOWER_DEFAULT     4500     // Lighter duty descending (gravity assist)
@@ -241,7 +241,7 @@ typedef struct {
 #define CW_SIM_TOLERANCE_ML        2.0f     // ±2 ml = "at target"
 
 #define VISION_HEARTBEAT_TIMEOUT_MS 2000
-#define WATCHDOG_KICK_PERIOD_MS     500
+#define WATCHDOG_KICK_PERIOD_MS     500      // Reserved — current design has each task kick at its own tick rate, this constant is unused but kept in case a centralised kick scheduler is introduced later
 #define WATCHDOG_MAX_INTERVAL_MS    1500
 
 // ----------------------------------------------------------------------------
