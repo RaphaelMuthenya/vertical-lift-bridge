@@ -8,7 +8,7 @@ This guide provides a step-by-step walkthrough for simulating the components own
 
 Before we begin, it's vital to understand what Wokwi *can* and *cannot* do regarding M3's specific hardware:
 
-1. **HC-SR04 Ultrasonics**: Wokwi natively supports HC-SR04 sensors. You can use an interactive slider during the simulation to change the distance, making it perfect for testing the direction inference logic (approaching vs. leaving) across all four sensors.
+1. **HC-SR04 Ultrasonics**: Wokwi natively supports HC-SR04 sensors. You can use an interactive slider during the simulation to change the distance, making it perfect for testing the direction inference logic (approaching vs. leaving) across all four sensors. *Note:* the v2.2 production hardware only delivers ranging data from US4 (see `docs/known_limitations.md` L8), but Wokwi has none of those pin-sharing constraints — it's a great place to validate the direction-inference algorithm itself for the v3 build.
 2. **ESP32-CAM (OV2640)**: Wokwi **does not** simulate physical camera sensors or image processing algorithms (like frame-differencing). 
    * **The Workaround:** Since the main ESP32 only cares about the data coming *out* of the ESP32-CAM over UART2 (the JSON strings), we will simulate the camera by injecting mock JSON data into the UART RX pin of the main ESP32.
 

@@ -241,6 +241,33 @@ If you DO see vision-lost faults:
 
 ## Step 5 — HC-SR04 ultrasonic install (4 sensors, 2 pairs)
 
+> **READ THIS BEFORE WIRING — v2.2 reality (see `docs/known_limitations.md` L8):**
+>
+> The PCB and BOM provision four HC-SR04 modules for full direction
+> inference, but the v2.2 pin allocation only delivers ranging data
+> from **US4** in production. Three of the four are crippled by pin-
+> sharing the firmware cannot work around without a board respin:
+>
+> - **US1 TRIG (GPIO 5)** is permanently driven by the LEDC PWM for
+>   `PIN_SERVO_LEFT` once `interlocks_init` runs. `digitalWrite` on
+>   that GPIO no longer reaches the SR04 — no trigger, no echo.
+> - **US3 TRIG (GPIO 22)** has the same fate via `PIN_SERVO_RIGHT`.
+> - **US2 ECHO (GPIO 21)** is permanently held OUTPUT LOW by the
+>   74HC595 OE pin — the LED chain would extinguish if we shared it.
+> - **US4** works fully, *provided you unplug the USB cable* (US4
+>   shares UART0 — see Step 5.3 note below).
+>
+> Vision (the ESP32-CAM) is the **primary** vehicle-detection path for
+> v2.2 and the FSM's `EVT_VEHICLE_DETECTED` ORs both sources, so the
+> bridge cycle still works end-to-end. The four-sensor wiring is left
+> in place so the v3 PCB (with a 74HC4051 mux) can re-enable direction
+> inference without further mechanical changes.
+>
+> **Bench testing this step:** wire all four sensors as documented for
+> v3-ready hardware, but in v2.2 only US4 will return non-`0xFFFF`
+> distances during normal operation. Do not spend time chasing US1/2/3
+> "noise" — it's the documented limitation, not a wiring fault.
+
 ### 5.1 What an HC-SR04 does
 The HC-SR04 emits a 40 kHz ultrasonic chirp on its TRIG pin and reports the round-trip flight time as a pulse width on its ECHO pin. The firmware in `ultrasonic.cpp` line 33 (`measure_cm()`) divides by 58 to convert microseconds to centimetres (sound travels ~343 m/s).
 

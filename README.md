@@ -146,7 +146,7 @@ The main firmware is structured as a collection of FreeRTOS tasks pinned to spec
 | `task_safety` | 0 | 5 | 3 KB | Watchdog poll, fault evaluate, interlocks |
 | `task_fsm` | 0 | 4 | 4 KB | Pull events from queue, run FSM, dispatch motor + light + barrier commands |
 | `task_motor` | 0 | 4 | 3 KB | Apply motor commands, read ADC current, update position |
-| `task_sensors` | 0 | 3 | 3 KB | Tick HC-SR04 ultrasonics at 20 Hz, infer direction |
+| `task_sensors` | 0 | 3 | 3 KB | Tick HC-SR04 ultrasonics at 20 Hz, infer direction (degraded in v2.2 — see L8) |
 | `task_vision` | 0 | 3 | 4 KB | UART2 RX, parse ESP32-CAM JSON, heartbeat timeout |
 | `task_counterweight` | 0 | 2 | 2 KB | Simulated dynamic counterweight — pump/drain/level at 20 Hz |
 | `task_telemetry` | 0 | 1 | 2 KB | Uptime, CPU load, voltage rails — 1 Hz |
@@ -227,7 +227,7 @@ vertical-lift-bridge/
 │       ├── motor/               # ◄── M2
 │       │   └── motor_driver.h/.cpp  # L293L PWM, deck-position pot, limit discrim
 │       ├── sensors/             # ◄── M3
-│       │   └── ultrasonic.h/.cpp    # Dual HC-SR04, direction inference
+│       │   └── ultrasonic.h/.cpp    # Quad HC-SR04 driver, direction inference (only US4 in v2.2)
 │       ├── vision/              # ◄── M3
 │       │   └── vision_link.h/.cpp   # UART2 JSON parser, heartbeat
 │       ├── traffic/             # ◄── M4
