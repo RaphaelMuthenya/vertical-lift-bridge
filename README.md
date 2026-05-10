@@ -149,7 +149,7 @@ The main firmware is structured as a collection of FreeRTOS tasks pinned to spec
 | `task_sensors` | 0 | 3 | 3 KB | Tick HC-SR04 ultrasonics at 20 Hz, infer direction (degraded in v2.2 — see L8) |
 | `task_vision` | 0 | 3 | 4 KB | UART2 RX, parse ESP32-CAM JSON, heartbeat timeout |
 | `task_counterweight` | 0 | 2 | 2 KB | Simulated dynamic counterweight — pump/drain/level at 20 Hz |
-| `task_telemetry` | 0 | 1 | 2 KB | Uptime, CPU load, voltage rails — 1 Hz |
+| `task_telemetry` | 0 | 1 | 2 KB | Uptime + CPU load — 1 Hz (rails not measured in v2.2, see L1) |
 | `task_hmi` | 1 | 2 | 8 KB | LVGL tick, screen refresh, touch + button input handler |
 
 State is shared through a single mutex-guarded `SharedStatus_t` struct (defined in `firmware/src/system_types.h`) — no task touches another's globals directly. Inter-task communication uses three FreeRTOS queues: `g_event_queue` (FSM events), `g_motor_cmd_queue` (motor direction + duty), and `g_hmi_cmd_queue` (operator inputs).

@@ -338,7 +338,7 @@ static const FaultRow kFaultRows[] = {
     { FAULT_ULTRASONIC_FAIL,   "Ultrasonics dead"   },
     { FAULT_TFT_INIT_FAIL,     "TFT init failed"    },
     { FAULT_TOUCH_INIT_FAIL,   "Touch init failed"  },
-    { FAULT_BARRIER_TIMEOUT,   "Barrier timeout"    },
+    // FAULT_BARRIER_TIMEOUT reserved-but-unset in v2.2 (open-loop SG90, see L7) — omit
     { FAULT_RELAY_FEEDBACK,    "Relay feedback fail" },
     // FAULT_UNDERVOLT_12V deprecated in v2.1 — omit
     { FAULT_OVERTEMP,          "Overtemperature"    },
