@@ -127,10 +127,13 @@ These are **documented in `pin_config.h`** as intentional design compromises:
 | GPIO | Owners | Resolution |
 |---|---|---|
 | 5 | PIN_SERVO_LEFT + PIN_US1_TRIG | Servos move only when motor idle; ultrasonics off during barrier sweep |
-| 21 | PIN_595_OE_N + PIN_US2_ECHO | Sensor task disables ultrasonic ISRs while shifting LED bytes (~100 µs) |
-| 22 | PIN_SERVO_RIGHT + PIN_US3_TRIG | Same as GPIO 5 |
-| 0 | PIN_BUZZER + PIN_ESTOP_IRQ + BOOT strapping | E-stop has separate hardware path; buzzer is driven through a ULN2803 channel only after boot |
-| 1 | PIN_BUZZER (LEDC) + PIN_US4_TRIG + UART0 TX | See L4 |
+| 18 | PIN_595_CLOCK + PIN_US1_ECHO | DATA/CLOCK toggle to INPUT_PULLUP between LED shifts (see traffic_lights.cpp) — US1 echo readable most of the time |
+| 19 | PIN_595_LATCH + PIN_US2_TRIG | Both drivers want OUTPUT — LATCH stays OUTPUT; trigger pulses overlap rarely (sub-µs LATCH vs 10 µs TRIG) |
+| 21 | PIN_595_OE_N + PIN_US2_ECHO | OE must hold OUTPUT LOW; cannot share — US2 ECHO permanently dead in v2.2 (see L8) |
+| 22 | PIN_SERVO_RIGHT + PIN_US3_TRIG | Servo PWM owns the pin once attached; US3 trigger pulses are absorbed (see L8) |
+| 23 | PIN_595_DATA + PIN_US3_ECHO | Same toggle scheme as GPIO 18 — US3 echo readable most of the time |
+| 0  | PIN_ESTOP_IRQ + BOOT strapping | E-stop ISR is OK because BOOT uses a separate strap circuit; mushroom button cuts hardware relay independently |
+| 1  | PIN_BUZZER (LEDC) + PIN_US4_TRIG + UART0 TX | See L4 — buzzer + US4 TRIG + serial conflict, time-division managed manually |
 
 These are not "limitations" in the sense that they fail — they work — but
 they are fragile and should be cleaned up in the v3 PCB respin.
